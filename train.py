@@ -81,10 +81,19 @@ if __name__ == "__main__":
                                   win_length, f_min, f_max)
 
     print('Initializing model...')
-    model = GradTTSSDP(nsymbols, 1, None, n_enc_channels, filter_channels, filter_channels_dp, 
+
+    """ GradTTSSDP model """
+    model = GradTTSSDP(nsymbols, 1, None, n_enc_channels, filter_channels, filter_channels_dp,
                     n_heads, n_enc_layers, enc_kernel, enc_dropout, window_size, 
                     n_feats, dec_dim, beta_min, beta_max, pe_scale).cuda()
+
+    """ GradTTSContext model """
+    # model = GradTTSSDPContext(nsymbols, 1, None, n_enc_channels, filter_channels, filter_channels_dp,
+    #                 n_heads, n_enc_layers, enc_kernel, enc_dropout, window_size, 
+    #                 n_feats, dec_dim, beta_min, beta_max, pe_scale, k=5).cuda()
     
+    # model.load_state_dict(torch.load("/mnt/Work/Thesis/Bangla_TTS/scratch_implementations/Grad-TTS/logs/new_exp_sdp_context_resnet_network_5/grad_79.pt", map_location=lambda loc, storage: loc))
+
     print('Number of encoder + duration predictor parameters: %.2fm' % (model.encoder.nparams/1e6))
     print('Number of decoder parameters: %.2fm' % (model.decoder.nparams/1e6))
     print('Total parameters: %.2fm' % (model.nparams/1e6))
@@ -113,10 +122,18 @@ if __name__ == "__main__":
                 model.zero_grad()
                 x, x_lengths = batch['x'].cuda(), batch['x_lengths'].cuda()
                 y, y_lengths = batch['y'].cuda(), batch['y_lengths'].cuda()
-                dur_loss, prior_loss, diff_loss, context_loss = model.compute_loss(x, x_lengths,
+
+                """ for running GradTTSSDP mode """
+                dur_loss, prior_loss, diff_loss = model.compute_loss(x, x_lengths,
                                                                      y, y_lengths,
                                                                      out_size=out_size)
-                loss = sum([dur_loss, prior_loss, diff_loss, context_loss])
+                loss = sum([dur_loss, prior_loss, diff_loss])
+
+                """ for running SDPContext model """
+                # dur_loss, prior_loss, diff_loss, context_loss = model.compute_loss(x, x_lengths,
+                #                                                      y, y_lengths,
+                #                                                      out_size=out_size)
+                # loss = sum([dur_loss, prior_loss, diff_loss, context_loss])
                 loss.backward()
 
                 enc_grad_norm = torch.nn.utils.clip_grad_norm_(model.encoder.parameters(),
@@ -131,8 +148,7 @@ if __name__ == "__main__":
                                   global_step=iteration)
                 logger.add_scalar('training/diffusion_loss', diff_loss.item(),
                                   global_step=iteration)
-                logger.add_scalar('training/context_loss', context_loss.item(),
-                                  global_step=iteration)
+
                 logger.add_scalar('training/encoder_grad_norm', enc_grad_norm,
                                   global_step=iteration)
                 logger.add_scalar('training/decoder_grad_norm', dec_grad_norm,
@@ -141,10 +157,9 @@ if __name__ == "__main__":
                 dur_losses.append(dur_loss.item())
                 prior_losses.append(prior_loss.item())
                 diff_losses.append(diff_loss.item())
-                context_losses.append(context_loss.item())
                 
                 if batch_idx % 5 == 0:
-                    msg = f'Epoch: {epoch}, iteration: {iteration} | dur_loss: {dur_loss.item()}, prior_loss: {prior_loss.item()}, diff_loss: {diff_loss.item()}, context_loss: {context_loss.item()}'
+                    msg = f'Epoch: {epoch}, iteration: {iteration} | dur_loss: {dur_loss.item()}, prior_loss: {prior_loss.item()}, diff_loss: {diff_loss.item()}'
                     progress_bar.set_description(msg)
                 
                 iteration += 1
@@ -152,7 +167,6 @@ if __name__ == "__main__":
         log_msg = 'Epoch %d: duration loss = %.3f ' % (epoch, np.mean(dur_losses))
         log_msg += '| prior loss = %.3f ' % np.mean(prior_losses)
         log_msg += '| diffusion loss = %.3f\n' % np.mean(diff_losses)
-        log_msg += '| context loss = %.3f\n' % np.mean(context_losses)
         with open(f'{log_dir}/train.log', 'a') as f:
             f.write(log_msg)
 
