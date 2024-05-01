@@ -56,7 +56,11 @@ You can also perform *interactive inference* by running Jupyter Notebook `infere
     python train.py 
     ```
 5. To track your training process run tensorboard server on any available port:
-    ```bash
+    ``` bash
     tensorboard --logdir=YOUR_LOG_DIR --port=8888
     ```
     During training all logging information and checkpoints are stored in `YOUR_LOG_DIR`, which you can specify in `params.py` before training.
+
+
+### Note
+If you'd like to run the SDP+Context model, simple comment out the parts under GradTTSSDP model comments and uncomment the parts under GradTTSSDPContext in `train.py` and `inference.py`
