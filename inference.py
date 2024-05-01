@@ -100,10 +100,10 @@ def get_text(text, add_blank=True):
 if __name__ == '__main__':
     
     parser = argparse.ArgumentParser()
-    # parser.add_argument('-f', '--file', type=str, required=True, help='path to a file with texts to synthesize')
-    # parser.add_argument('-c', '--checkpoint', type=str, required=True, help='path to a checkpoint of Grad-TTS')
-    # parser.add_argument('-t', '--timesteps', type=int, required=False, default=10, help='number of timesteps of reverse diffusion')
-    # parser.add_argument('-s', '--speaker_id', type=int, required=False, default=None, help='speaker id for multispeaker model')
+    parser.add_argument('-f', '--file', type=str, required=True, help='path to a file with texts to synthesize')
+    parser.add_argument('-c', '--checkpoint', type=str, required=True, help='path to a checkpoint of Grad-TTS')
+    parser.add_argument('-t', '--timesteps', type=int, required=False, default=10, help='number of timesteps of reverse diffusion')
+    parser.add_argument('-s', '--speaker_id', type=int, required=False, default=None, help='speaker id for multispeaker model')
     args = parser.parse_args()
 
 
@@ -151,49 +151,23 @@ if __name__ == '__main__':
 
     latent_min = 50
     latent_max = 800
-
-
-    # text = "তাতে কোনো ঝামেলা নেই, সমস্যা হল রোজ দু'বেলা টিফিন- ক্যারিয়ারে খাবার নেওয়ার সময় ও বাড়ির সামনে কেউ দেখে না ফেলে।"
-
-    # x = torch.LongTensor(get_text(text)).cuda()[None]
-    # x_lengths = torch.LongTensor([x.shape[-1]]).cuda()
-    # x.shape, x_lengths
-
-    # t = dt.datetime.now()
-    # y_enc, y_dec, attn = generator.forward(x, x_lengths, n_timesteps=50, temperature=1.3,
-    #                                     stoc=False, spk=None if params.n_spks==1 else torch.LongTensor([15]).cuda(),
-    #                                     length_scale=0.91)
-    
-    # y_dec = y_dec.cuda()
-
-    # audio = (vocoder.forward(y_dec).cpu().squeeze().clamp(-1, 1).numpy() * 32768).astype(np.int16)
-    # write(f'/mnt/Work/Thesis/Bangla_TTS/scratch_implementations/data/test/raw/sample.wav', 22050, audio)
-    # texts = []
-
-    # with open(args.file, 'r', encoding='utf-8') as f:
-    #     texts = [line.strip() for line in f.readlines()]
-    # cmu = cmudict.CMUDict('./resources/cmu_dictionary')
-
-    # texts = open(args.file, 'r').read().split('\n')
-    timesteps = 100
     
     with torch.no_grad():
-        # for i, text in enumerate(texts):
-        text = "দেয়ালঘড়ি"
-        print(f'Synthesizing text...', end=' ')
-        x = torch.LongTensor(get_text(text)).cuda()[None]
-        x_lengths = torch.LongTensor([x.shape[-1]]).cuda()
-                
-        t = dt.datetime.now()
-        y_enc, y_dec, attn = generator.forward(x, x_lengths, n_timesteps=timesteps, temperature=1.5,
-                                                    stoc=False, spk=spk, length_scale=0.91)
-        t = (dt.datetime.now() - t).total_seconds()
-        print(f'Grad-TTS RTF: {t * 22050 / (y_dec.shape[-1] * 256)}')
-        rtf = t * 22050 / (y_dec.shape[-1] * 256)
-
-        audio = (vocoder.forward(y_dec).cpu().squeeze().clamp(-1, 1).numpy() * 32768).astype(np.float32)
-        len_ = len(audio) / 22050
-        write(f'./out/sample_{i}.wav', 22050, audio)
+        for i, text in enumerate(texts):
+            print(f'Synthesizing text...', end=' ')
+            x = torch.LongTensor(get_text(text)).cuda()[None]
+            x_lengths = torch.LongTensor([x.shape[-1]]).cuda()
+                    
+            t = dt.datetime.now()
+            y_enc, y_dec, attn = generator.forward(x, x_lengths, n_timesteps=timesteps, temperature=1.5,
+                                                        stoc=False, spk=spk, length_scale=0.91)
+            t = (dt.datetime.now() - t).total_seconds()
+            print(f'Grad-TTS RTF: {t * 22050 / (y_dec.shape[-1] * 256)}')
+            rtf = t * 22050 / (y_dec.shape[-1] * 256)
+    
+            audio = (vocoder.forward(y_dec).cpu().squeeze().clamp(-1, 1).numpy() * 32768).astype(np.float32)
+            len_ = len(audio) / 22050
+            write(f'./out/sample_{i}.wav', 22050, audio)
 
 
     print('Done. Check out `out` folder for samples.')
