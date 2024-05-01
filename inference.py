@@ -115,15 +115,8 @@ if __name__ == '__main__':
     spk = None
 
     
-    print('Initializing Grad-TTS...')
-    # generator = GradTTS(len(symbols)+1, params.n_spks, params.spk_emb_dim,
-    #                     params.n_enc_channels, params.filter_channels,
-    #                     params.filter_channels_dp, params.n_heads, params.n_enc_layers,
-    #                     params.enc_kernel, params.enc_dropout, params.window_size,
-    #                     params.n_feats, params.dec_dim, params.beta_min, params.beta_max,
-    #                     pe_scale=1000)  # pe_scale=1 for `grad-tts-old.pt`
-    # generator.load_state_dict(torch.load('/mnt/Work/Thesis/Bangla_TTS/scratch_implementations/Grad-TTS/logs/new_exp/grad_39.pt', map_location=lambda loc, storage: loc))
-
+    print('Initializing model...')
+    """ GradTTSSDPContext """
     # generator = GradTTSSDPContext(len(symbols)+1, params.n_spks, params.spk_emb_dim,
     #                     params.n_enc_channels, params.filter_channels,
     #                     params.filter_channels_dp, params.n_heads, params.n_enc_layers,
@@ -131,6 +124,7 @@ if __name__ == '__main__':
     #                     params.n_feats, params.dec_dim, params.beta_min, params.beta_max,
     #                     pe_scale=1000, k=5)  # pe_scale=1 for `grad-tts-old.pt`
 
+  """ GradTTSSDP """
     generator = GradTTSSDP(len(symbols)+1, params.n_spks, params.spk_emb_dim,
                         params.n_enc_channels, params.filter_channels,
                         params.filter_channels_dp, params.n_heads, params.n_enc_layers,
