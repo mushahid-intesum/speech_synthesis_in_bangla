@@ -31,11 +31,11 @@ pip install -r requirements.txt
 
 You can download BnTTS dataset (22kHz) from [here](put link here).
 
-Put necessary HiFi-GAN checkpoints into `checkpts` folder in root Grad-TTS directory (note: in `inference.py` you can change default HiFi-GAN path).
+Put necessary HiFi-GAN checkpoints into `checkpts` folder in root directory (note: in `inference.py` you can change default HiFi-GAN path).
 
 1. Create text file with sentences you want to synthesize like `resources/filelists/synthesis.txt`.
 2. For single speaker set `params.n_spks=1`.
-3. Run script `inference.py` by providing path to the text file, path to the Grad-TTS checkpoint, number of iterations to be used for reverse diffusion (default: 10) and speaker id if you want to perform multispeaker inference:
+3. Run script `inference.py` by providing path to the text file, path to the model checkpoint, number of iterations to be used for reverse diffusion (default: 10) and speaker id if you want to perform multispeaker inference:
     ```bash
     python inference.py -f <your-text-file> -c <bn-tts-checkpoint> -t <number-of-timesteps> 
     ```
@@ -60,9 +60,3 @@ You can also perform *interactive inference* by running Jupyter Notebook `infere
     tensorboard --logdir=YOUR_LOG_DIR --port=8888
     ```
     During training all logging information and checkpoints are stored in `YOUR_LOG_DIR`, which you can specify in `params.py` before training.
-
-## References
-
-* HiFi-GAN model is used as vocoder, official github repository: [link](https://github.com/jik876/hifi-gan).
-* Monotonic Alignment Search algorithm is used for unsupervised duration modelling, official github repository: [link](https://github.com/jaywalnut310/glow-tts).
-* Phonemization utilizes CMUdict, official github repository: [link](https://github.com/cmusphinx/cmudict).
