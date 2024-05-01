@@ -3,7 +3,7 @@
 </p>
 
 
-# Grad-TTS
+# A Robust Text-to-Speech System in Bangla with Stochastic Duration Predictor
 
 Official implementation of A Robust Text-to-Speech System in Bangla with Stochastic
 Duration Predictor
