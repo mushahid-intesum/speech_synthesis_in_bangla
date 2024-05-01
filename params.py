@@ -43,7 +43,7 @@ beta_max = 20.0
 pe_scale = 1000  # 1 for `grad-tts-old.pt` checkpoint
 
 # training parameters
-log_dir = 'logs/new_exp_mahedi_tomal'
+log_dir = 'logs/new_exp'
 test_size = 4
 n_epochs = 100
 batch_size = 16
