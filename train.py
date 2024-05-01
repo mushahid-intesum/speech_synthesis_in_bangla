@@ -81,12 +81,10 @@ if __name__ == "__main__":
                                   win_length, f_min, f_max)
 
     print('Initializing model...')
-    model = GradTTS(nsymbols, 1, None, n_enc_channels, filter_channels, filter_channels_dp, 
+    model = GradTTSSDP(nsymbols, 1, None, n_enc_channels, filter_channels, filter_channels_dp, 
                     n_heads, n_enc_layers, enc_kernel, enc_dropout, window_size, 
                     n_feats, dec_dim, beta_min, beta_max, pe_scale).cuda()
     
-    # model.load_state_dict(torch.load("/mnt/Work/Thesis/Bangla_TTS/scratch_implementations/Grad-TTS/logs/new_exp_sdp_context_resnet_network_5/grad_79.pt", map_location=lambda loc, storage: loc))
-
     print('Number of encoder + duration predictor parameters: %.2fm' % (model.encoder.nparams/1e6))
     print('Number of decoder parameters: %.2fm' % (model.decoder.nparams/1e6))
     print('Total parameters: %.2fm' % (model.nparams/1e6))
