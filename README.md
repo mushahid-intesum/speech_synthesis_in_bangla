@@ -29,7 +29,7 @@ pip install -r requirements.txt
 
 ## Inference
 
-You can download BnTTS dataset (22kHz) from [here](put link here).
+You can download BnTTS dataset (22kHz) from [here](https://drive.google.com/drive/folders/195CgbUxViuGg0aJKUSvkYulTJEf3eUbS?usp=drive_link).
 
 Put necessary HiFi-GAN checkpoints into `checkpts` folder in root directory (note: in `inference.py` you can change default HiFi-GAN path).
 
@@ -40,8 +40,6 @@ Put necessary HiFi-GAN checkpoints into `checkpts` folder in root directory (not
     python inference.py -f <your-text-file> -c <bn-tts-checkpoint> -t <number-of-timesteps> 
     ```
 4. Check out folder called `out` for generated audios.
-
-You can also perform *interactive inference* by running Jupyter Notebook `inference.ipynb` or by using our [Google Colab Demo](https://colab.research.google.com/drive/1YNrXtkJQKcYDmIYJeyX8s5eXxB4zgpZI?usp=sharing).
 
 ## Training
 
