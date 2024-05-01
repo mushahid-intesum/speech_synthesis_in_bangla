@@ -8,7 +8,7 @@
 Official implementation of A Robust Text-to-Speech System in Bangla with Stochastic
 Duration Predictor
 
-**Authors**: Mushahid Intesum\**, Abdullah Ibne Masud\**, Md Ashraful Islam\*, Dr Md Rezaul Karim.
+**Authors**: Mushahid Intesum\**, Abdullah Ibne Masud\**, Md Ashraful Islam\**, Dr Md Rezaul Karim.
 
 <sup>\*Equal contribution.</sup>
 <sup>\**Corresponding Author.</sup>
