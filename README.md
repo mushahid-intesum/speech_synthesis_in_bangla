@@ -5,47 +5,39 @@
 
 # Grad-TTS
 
-Official implementation of the Grad-TTS model based on Diffusion Probabilistic Modelling. For all details check out our paper accepted to ICML 2021 via [this](https://arxiv.org/abs/2105.06337) link.
+Official implementation of A Robust Text-to-Speech System in Bangla with Stochastic
+Duration Predictor
 
-**Authors**: Vadim Popov\*, Ivan Vovk\*, Vladimir Gogoryan, Tasnima Sadekova, Mikhail Kudinov.
+**Authors**: Mushahid Intesum\**, Abdullah Ibne Masud\**, Md Ashraful Islam\*, Dr Md Rezaul Karim.
 
 <sup>\*Equal contribution.</sup>
+<sup>\**Corresponding Author.</sup>
 
 ## Abstract
 
-**Demo page** with voiced abstract: [link](https://grad-tts.github.io/).
-
-Recently, denoising diffusion probabilistic models and generative score matching have shown high potential in modelling complex data distributions while stochastic calculus has provided a unified point of view on these techniques allowing for flexible inference schemes. In this paper we introduce Grad-TTS, a novel text-to-speech model with score-based decoder producing mel-spectrograms by gradually transforming noise predicted by encoder and aligned with text input by means of Monotonic Alignment Search. The framework of stochastic differential equations helps us to generalize conventional diffusion probabilistic models to the case of reconstructing data from noise with different parameters and allows to make this reconstruction flexible by explicitly controlling trade-off between sound quality and inference speed. Subjective human evaluation shows that Grad-TTS is competitive with state-of-the-art text-to-speech approaches in terms of Mean Opinion Score.
+Text-to-speech (TTS), a field aiming to produce natural speech from text, is a prominent area of research in speech, language, and machine learning, with broad industrial applications. Despite Bangla being the seventh most spoken language globally, there exists a significant shortage of high-quality audio data for TTS, automatic speech recognition, and other audio-related natural language processing tasks. To address this gap, we have compiled a meticulously curated single-speaker Bangla audio dataset. Following extensive preprocessing, our dataset has more than 20 hours of clean audio data featuring a diverse array of genres and sources, supplemented by novel metrics, including categorization based on sentence complexity, distribution of tense and person, as well as quantitative measurements such as word count, unique word count, and compound letter count. Our dataset, along with its distinctive evaluation metrics, fills a significant void in the evaluation of Bangla audio datasets, rendering it a valuable asset for future research endeavors. Additionally, we propose a novel TTS model employing diffusion and a duration predictor. Our model integrates a Stochastic Duration Predictor(SDP) to enhance alignment between input text and speech duration, alongside a context prediction network for improved word pronunciation. The incorporation of the SDP aims to emulate the variability observed in human speech, where the same sentence may be pronounced with different duration. This addition facilitates the generation of more natural-sounding audio samples with improved duration characteristics. Through blind subjective analysis utilizing the Mean Opinion Score (MOS), we demonstrate that our proposed model enhances the quality of the state-of-the-art GradTTS model.
 
 ## Installation
 
-Firstly, install all Python package requirements:
+Install all Python package requirements:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Secondly, build `monotonic_align` code (Cython):
-
-```bash
-cd model/monotonic_align; python setup.py build_ext --inplace; cd ../..
-```
-
-**Note**: code is tested on Python==3.6.9.
+**Note**: code is tested on Python==3.10.9.
 
 ## Inference
 
-You can download Grad-TTS and HiFi-GAN checkpoints trained on LJSpeech* and Libri-TTS datasets (22kHz) from [here](https://drive.google.com/drive/folders/1grsfccJbmEuSBGQExQKr3cVxNV0xEOZ7?usp=sharing).
+You can download BnTTS dataset (22kHz) from [here](put link here).
 
-***Note**: we open-source 2 checkpoints of Grad-TTS trained on LJSpeech. They are the same models but trained with different positional encoding scale: **x1** (`"grad-tts-old.pt"`, ICML 2021 sumbission model) and **x1000** (`"grad-tts.pt"`). To use the former set `params.pe_scale=1` and to use the latter set `params.pe_scale=1000`. Libri-TTS checkpoint was trained with scale **x1000**.
-
-Put necessary Grad-TTS and HiFi-GAN checkpoints into `checkpts` folder in root Grad-TTS directory (note: in `inference.py` you can change default HiFi-GAN path).
+Put necessary HiFi-GAN checkpoints into `checkpts` folder in root Grad-TTS directory (note: in `inference.py` you can change default HiFi-GAN path).
 
 1. Create text file with sentences you want to synthesize like `resources/filelists/synthesis.txt`.
-2. For single speaker set `params.n_spks=1` and for multispeaker (Libri-TTS) inference set `params.n_spks=247`.
+2. For single speaker set `params.n_spks=1`.
 3. Run script `inference.py` by providing path to the text file, path to the Grad-TTS checkpoint, number of iterations to be used for reverse diffusion (default: 10) and speaker id if you want to perform multispeaker inference:
     ```bash
-    python inference.py -f <your-text-file> -c <grad-tts-checkpoint> -t <number-of-timesteps> -s <speaker-id-if-multispeaker>
+    python inference.py -f <your-text-file> -c <bn-tts-checkpoint> -t <number-of-timesteps> 
     ```
 4. Check out folder called `out` for generated audios.
 
@@ -53,15 +45,17 @@ You can also perform *interactive inference* by running Jupyter Notebook `infere
 
 ## Training
 
-1. Make filelists of your audio data like ones included into `resources/filelists` folder. For single speaker training refer to `jspeech` filelists and to `libri-tts` filelists for multispeaker.
-2. Set experiment configuration in `params.py` file.
-3. Specify your GPU device and run training script:
+1. Make filelists of your audio data like ones included into `resources/filelists` folder. Make a new folder names `data` and put audio files inside `wavs` and text files in `text` folders respectively.
+2. Make a `metadata.txt` file that has audio file name and the corresponding text. An example is:
+```
+1233456|this is the text
+``` 
+3. Set experiment configuration in `params.py` file.
+4. Specify your GPU device and run training script:
     ```bash
-    export CUDA_VISIBLE_DEVICES=YOUR_GPU_ID
-    python train.py  # if single speaker
-    python train_multi_speaker.py  # if multispeaker
+    python train.py 
     ```
-4. To track your training process run tensorboard server on any available port:
+5. To track your training process run tensorboard server on any available port:
     ```bash
     tensorboard --logdir=YOUR_LOG_DIR --port=8888
     ```
