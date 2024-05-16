@@ -100,11 +100,11 @@ def get_text(text, add_blank=True):
 if __name__ == '__main__':
     
     parser = argparse.ArgumentParser()
-    parser.add_argument('-f', '--file', type=str, required=True, help='path to a file with texts to synthesize')
-    parser.add_argument('-c', '--checkpoint', type=str, required=True, help='path to a checkpoint of Grad-TTS')
-    parser.add_argument('-t', '--timesteps', type=int, required=False, default=10, help='number of timesteps of reverse diffusion')
-    parser.add_argument('-s', '--speaker_id', type=int, required=False, default=None, help='speaker id for multispeaker model')
-    args = parser.parse_args()
+    # parser.add_argument('-f', '--file', type=str, required=True, help='path to a file with texts to synthesize')
+    # parser.add_argument('-c', '--checkpoint', type=str, required=True, help='path to a checkpoint of Grad-TTS')
+    # parser.add_argument('-t', '--timesteps', type=int, required=False, default=10, help='number of timesteps of reverse diffusion')
+    # parser.add_argument('-s', '--speaker_id', type=int, required=False, default=None, help='speaker id for multispeaker model')
+    # args = parser.parse_args()
 
 
 
@@ -131,7 +131,8 @@ if __name__ == '__main__':
                         params.enc_kernel, params.enc_dropout, params.window_size,
                         params.n_feats, params.dec_dim, params.beta_min, params.beta_max,
                         pe_scale=1000)  # pe_scale=1 for `grad-tts-old.pt`
-    _ = generator.cuda().eval()
+    # generator.load_state_dict(torch.load('pretrained_models/propose.pt', map_location=lambda loc, storage: loc))
+    _ = generator.eval()
     print(f'Number of parameters: {generator.nparams}')
     
     print('Initializing HiFi-GAN...')
@@ -139,28 +140,44 @@ if __name__ == '__main__':
         h = AttrDict(json.load(f))
     vocoder = HiFiGAN(h)
     vocoder.load_state_dict(torch.load(HIFIGAN_CHECKPT, map_location=lambda loc, storage: loc)['generator'])
-    _ = vocoder.cuda().eval()
+    _ = vocoder.eval()
     vocoder.remove_weight_norm()
 
     latent_min = 50
     latent_max = 800
+
+    text = "তুই হইলি তুই আর আমি হইলাম আমি  "
+
+    x = torch.LongTensor(get_text(text))[None]
+    x_lengths = torch.LongTensor([x.shape[-1]])
+    x.shape, x_lengths
+
+    t = dt.datetime.now()
+    y_enc, y_dec, attn = generator.forward(x, x_lengths, n_timesteps=50, temperature=1.3,
+                                        stoc=False, spk=None if params.n_spks==1 else torch.LongTensor([15]),
+                                        length_scale=0.91)
     
-    with torch.no_grad():
-        for i, text in enumerate(texts):
-            print(f'Synthesizing text...', end=' ')
-            x = torch.LongTensor(get_text(text)).cuda()[None]
-            x_lengths = torch.LongTensor([x.shape[-1]]).cuda()
+    y_dec = y_dec
+
+    audio = (vocoder.forward(y_dec).cpu().squeeze().clamp(-1, 1).detach().numpy() * 32768).astype(np.int16)
+    write(f'sample.wav', 22050, audio)
+    
+    # with torch.no_grad():
+    #     # for i, text in enumerate(texts):
+    #         print(f'Synthesizing text...', end=' ')
+    #         x = torch.LongTensor(get_text(text)).cuda()[None]
+    #         x_lengths = torch.LongTensor([x.shape[-1]]).cuda()
                     
-            t = dt.datetime.now()
-            y_enc, y_dec, attn = generator.forward(x, x_lengths, n_timesteps=timesteps, temperature=1.5,
-                                                        stoc=False, spk=spk, length_scale=0.91)
-            t = (dt.datetime.now() - t).total_seconds()
-            print(f'Grad-TTS RTF: {t * 22050 / (y_dec.shape[-1] * 256)}')
-            rtf = t * 22050 / (y_dec.shape[-1] * 256)
+    #         t = dt.datetime.now()
+    #         y_enc, y_dec, attn = generator.forward(x, x_lengths, n_timesteps=timesteps, temperature=1.5,
+    #                                                     stoc=False, spk=spk, length_scale=0.91)
+    #         t = (dt.datetime.now() - t).total_seconds()
+    #         print(f'Grad-TTS RTF: {t * 22050 / (y_dec.shape[-1] * 256)}')
+    #         rtf = t * 22050 / (y_dec.shape[-1] * 256)
     
-            audio = (vocoder.forward(y_dec).cpu().squeeze().clamp(-1, 1).numpy() * 32768).astype(np.float32)
-            len_ = len(audio) / 22050
-            write(f'./out/sample_{i}.wav', 22050, audio)
+    #         audio = (vocoder.forward(y_dec).cpu().squeeze().clamp(-1, 1).numpy() * 32768).astype(np.float32)
+    #         len_ = len(audio) / 22050
+    #         write(f'./out/sample.wav', 22050, audio)
 
 
     print('Done. Check out `out` folder for samples.')
