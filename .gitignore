@@ -2,3 +2,5 @@ resources
 checkpts
 out
 __pycache__
+logs
+other_log
