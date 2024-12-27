@@ -10,9 +10,9 @@ from model.utils import fix_len_compatibility
 
 
 # data parameters
-train_filelist_path = './resources/data/train.txt'
-valid_filelist_path = './resources/data/val.txt'
-test_filelist_path = './resources/data/test.txt'
+train_filelist_path = '/kaggle/input/bntts-data/resources/resources/data/train.txt'
+valid_filelist_path = '/kaggle/input/bntts-data/resources/resources/data/val.txt'
+test_filelist_path = '/kaggle/input/bntts-data/resources/resources/data/test.txt'
 cmudict_path = './resources/cmu_dictionary'
 add_blank = True
 n_mels = 80

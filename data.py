@@ -88,17 +88,19 @@ class TextMelDataset(torch.utils.data.Dataset):
                         ' ': 40}
 
     def get_data(self, filepath_and_text):
-        filepath = './resources/data/wavs/'+filepath_and_text[0] + '.wav'
+        filepath = '/kaggle/input/bntts-data/resources/resources/data/wavs/'+filepath_and_text[0] + '.wav'
         text = filepath_and_text[1]
         text, ipa_tokens = self.get_text(text, add_blank=self.add_blank)
         mel = self.get_mel(filepath)
 
         # return (text, mel, ipa_tokens)
-        return {
-            'x': text,  
-            'y': mel, 
-            'ph_tokens': ipa_tokens
-        }
+        # return {
+        #     'x': text,  
+        #     'y': mel, 
+        #     'ph_tokens': ipa_tokens
+        # }
+
+        return text, mel
 
     def get_mel(self, filepath):
         audio, sr = ta.load(filepath)
@@ -117,14 +119,14 @@ class TextMelDataset(torch.utils.data.Dataset):
     def get_text(self, text, add_blank=True):
         text_norm = replace_number_with_text(text)
         text_norm = bangla_text_normalize(text_norm)
-        text_tokens = self.bn_phonemizer.trans_list(text_norm)
-        ipa_tokens = self.get_ipa_tokens_from_text(text_tokens)
+        text_to_phonemes = self.bn_phonemizer.trans_list(text_norm)
+        ipa_tokens = self.get_ipa_tokens_from_text(text_to_phonemes)
         text_norm = torch.IntTensor(ipa_tokens)
 
-        print(f'Text" {text}')
-        print(f'IPA tokens" {ipa_tokens}')
-        print(f'Text tokens" {text_tokens}')
-        print(f'Text norm" {text_norm}')
+        # print(f'Text" {text}')
+        # print(f'IPA tokens" {ipa_tokens}')
+        # print(f'Text tokens" {text_to_phonemes}')
+        # print(f'Text norm" {text_norm}')
 
         return text_norm, ipa_tokens
 
