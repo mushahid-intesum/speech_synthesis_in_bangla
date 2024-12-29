@@ -252,6 +252,7 @@ class Diffusion(BaseModule):
         z = torch.randn(x0.shape, dtype=x0.dtype, device=x0.device, 
                         requires_grad=False)
         xt = mean + z * torch.sqrt(variance)
+
         return xt * mask, z * mask
 
     @torch.no_grad()
@@ -272,9 +273,11 @@ class Diffusion(BaseModule):
                 dxt_stoc = dxt_stoc * torch.sqrt(noise_t * h)
                 dxt = dxt_det + dxt_stoc
             else:
-                dxt = 0.5 * (mu - xt - self.estimator(xt, mask, mu, t, spk))
+                # dxt = 0.5 * (mu - xt - self.estimator(xt, mask, mu, t, spk))
+                dxt = 0.5
                 dxt = dxt * noise_t * h
             xt = (xt - dxt) * mask
+
         return xt
 
     @torch.no_grad()

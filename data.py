@@ -26,6 +26,7 @@ import epitran
 from meldataset import mel_spectrogram
 from model.syntactic_graph_buider import Sentence2GraphParser
 from model.dataset_utils import collate_1d_or_2d
+from model.align import get_mel2ph
 
 class TextMelDataset(torch.utils.data.Dataset):
     def __init__(self, filelist_path, add_blank=True,
@@ -88,19 +89,25 @@ class TextMelDataset(torch.utils.data.Dataset):
                         ' ': 40}
 
     def get_data(self, filepath_and_text):
-        filepath = '/kaggle/input/bntts-data/resources/resources/data/wavs/'+filepath_and_text[0] + '.wav'
+        filepath = '/mnt/Stuff/TTS/speech_synthesis_in_bangla-master/resources/data/wavs/'+filepath_and_text[0] + '.wav'
         text = filepath_and_text[1]
         text, ipa_tokens = self.get_text(text, add_blank=self.add_blank)
         mel = self.get_mel(filepath)
 
-        # return (text, mel, ipa_tokens)
-        # return {
-        #     'x': text,  
-        #     'y': mel, 
-        #     'ph_tokens': ipa_tokens
-        # }
-
         return text, mel
+    
+    def get_data_for_graph(self, filepath_and_text):
+        filepath = '/mnt/Stuff/TTS/speech_synthesis_in_bangla-master/resources/data/wavs/'+filepath_and_text[0] + '.wav'
+        text = filepath_and_text[1]
+        text_tokens, ph_tokens = self.get_text(text, add_blank=self.add_blank)
+        mel = self.get_mel(filepath)
+
+        return {
+            'text': text,
+            'x': text_tokens,  
+            'y': mel, 
+            'ph_tokens': ph_tokens
+        }
 
     def get_mel(self, filepath):
         audio, sr = ta.load(filepath)
@@ -145,33 +152,50 @@ class TextMelDataset(torch.utils.data.Dataset):
             test_batch.append(self.__getitem__(index))
         return test_batch
 
-
 class TextMelGraphDataset(TextMelDataset):
-    def __init__(self, prefix, hparams, filelist_path, shuffle=False, items=None, data_dir=None):
+    def __init__(self, hparams, filelist_path, word_dict, shuffle=False, items=None, data_dir=None):
         super().__init__(filelist_path)
-        self.data_dir = hparams['binary_data_dir'] if data_dir is None else data_dir
-        self.prefix = prefix
         self.hparams = hparams
         self.parser = Sentence2GraphParser("bn")
+        self.word_dict = word_dict
                 
     def _get_item(self, index):
-        return self.get_data(self.filepaths_and_text[index])
+        return self.get_data_for_graph(self.filepaths_and_text[index])
 
     def __getitem__(self, index):
         hparams = self.hparams
-        item = self.get_data(index)
+
+        item = self._get_item(index)
         max_frames = hparams['max_frames']
-        spec = torch.Tensor(item['y'])[:max_frames]
+        spec = item['y'][:max_frames]
         max_frames = spec.shape[0] // hparams['frames_multiple'] * hparams['frames_multiple']
-        spec = spec[:max_frames]
-        ph_token = torch.LongTensor(item['ph_tokens'][:hparams['max_input_tokens']])
+        # spec = spec[:max_frames]
+        ph_token = item['ph_tokens'][:hparams['max_input_tokens']]
+
+        words = item['text'].split(' ')
+        word_tokens = [self.word_dict[w] for w in words]
+        word_tokens = torch.LongTensor(word_tokens)
+
         sample = {
             "id": index,
-            "text": item['x'],
-            "txt_token": ph_token,
+            "text": item['text'],
+            "txt_token": item['x'],
             "mel": spec,
             "mel_nonpadding": spec.abs().sum(-1) > 0,
+            "word_tokens": word_tokens
         }
+
+        mel2ph, dur = get_mel2ph(ph_token, item['y'], hparams['hop_length'], hparams['sample_rate'],
+                                     hparams['min_sil_duration'])
+        
+        T = spec.shape[0]
+        sample['mel2ph'] = torch.LongTensor(mel2ph)[:T] 
+        sample['dur'] = dur
+
+        sample['ph2word'] = torch.LongTensor(item['ph_tokens'])
+
+        mel2word = [sample['ph2word'][p-1] for p in sample['mel2ph']]
+        sample['mel2word'] = torch.LongTensor(mel2word)
 
         graph, etypes = self.parser.parse(item['x'], words, item['ph_tokens'])
 
@@ -179,17 +203,46 @@ class TextMelGraphDataset(TextMelDataset):
         sample['edge_types'] = etypes
 
         return sample
+    
+    
+class TextMelGraphDatasetCollate(object):
+    def __init__(self, hparams):
+        self.hparams = hparams
 
-    def collater(self, samples):
+    def __call__(self, samples):
         if len(samples) == 0:
             return {}
         hparams = self.hparams
         id = torch.LongTensor([s['id'] for s in samples])
         text = [s['text'] for s in samples]
-        x = collate_1d_or_2d([s['txt_token'] for s in samples], 0)
-        y = collate_1d_or_2d([s['mel'] for s in samples], 0.0)
-        x_lengths = torch.LongTensor([s['txt_token'].numel() for s in samples])
-        y_lengths = torch.LongTensor([s['mel'].shape[0] for s in samples])
+        
+        B = len(samples)
+        y_max_length = max([item['mel'].shape[-1] for item in samples])
+        y_max_length = fix_len_compatibility(y_max_length)
+        x_max_length = max([item['txt_token'].shape[-1] for item in samples])
+        n_feats = samples[0]['mel'].shape[-2]
+
+        y = torch.zeros((B, n_feats, y_max_length), dtype=torch.float32)
+        x = torch.zeros((B, x_max_length), dtype=torch.long)
+        y_lengths, x_lengths = [], []
+
+        for i, item in enumerate(samples):
+            y_, x_ = item['mel'], item['txt_token']
+            y_lengths.append(y_.shape[-1])
+            x_lengths.append(x_.shape[-1])
+            y[i, :, :y_.shape[-1]] = y_
+            x[i, :x_.shape[-1]] = x_
+
+        y_lengths = torch.LongTensor(y_lengths)
+        x_lengths = torch.LongTensor(x_lengths)
+
+        mel2ph = collate_1d_or_2d([s['mel2ph'] for s in samples], 0.0)
+
+        word_tokens = collate_1d_or_2d([s['word_tokens'] for s in samples], 0)
+        dur = [s['dur'] for s in samples]
+
+        mel2word = collate_1d_or_2d([s['mel2word'] for s in samples], 0)
+        ph2word = collate_1d_or_2d([s['ph2word'] for s in samples], 0)
 
         batch = {
             'id': id,
@@ -199,19 +252,19 @@ class TextMelGraphDataset(TextMelDataset):
             'x_lengths': x_lengths,
             'y': y,
             'y_lengths': y_lengths,
+            'mel2ph': mel2ph,
+            'dur': dur,
+            'mel2word': mel2word,
+            'ph2word': ph2word,
+            'word_tokens': word_tokens
         }
 
-        if hparams['use_spk_embed']:
-            spk_embed = torch.stack([s['spk_embed'] for s in samples])
-            batch['spk_embed'] = spk_embed
-        if hparams['use_spk_id']:
-            spk_ids = torch.LongTensor([s['spk_id'] for s in samples])
-            batch['spk_ids'] = spk_ids
-
+        device = "cuda" if torch.cuda.is_available() else "cpu"
         graph_lst, etypes_lst = [], [] # new features for Graph-based SDP
         for s in samples:
-            graph_lst.append(s['dgl_graph'])
-            etypes_lst.append(s['edge_types'])
+            graph_lst.append(s['dgl_graph'].to(device))
+            etypes_lst.append(s['edge_types'].to(device))
+
         batch.update({
             'graph_lst': graph_lst,
             'etypes_lst': etypes_lst,
@@ -241,6 +294,7 @@ class TextMelBatchCollate(object):
 
         y_lengths = torch.LongTensor(y_lengths)
         x_lengths = torch.LongTensor(x_lengths)
+
         return {'x': x, 'x_lengths': x_lengths, 'y': y, 'y_lengths': y_lengths}
 
 

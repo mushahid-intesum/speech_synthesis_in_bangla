@@ -27,7 +27,7 @@ from model.pqmf import PQMF
 from model.rel_transformer import RelTransformerEncoder
 from model.transformer import MultiheadAttention, FFTBlocks
 from model.conv import ConvBlocks
-from model.nar_tts_modules import SyntaDurationPredictor
+from model.nar_tts_modules import SyntaDurationPredictor, LengthRegulator
 from model.modules import Embedding
 from model.align_ops import clip_mel2token_to_multiple, build_word_mask, expand_states, mel2ph_to_mel2word
 from model.seq_utils import group_hidden_by_segs
@@ -121,14 +121,19 @@ class GradTTSDependencyGraph(BaseModule):
 
         self.proj_w = SyntaDurationPredictor(
             self.n_enc_channels,
-            n_chans=synta_params['predictor_hidden'],
+            n_chans=self.n_enc_channels,
             n_layers=synta_params['dur_predictor_layers'],
             dropout_rate=synta_params['predictor_dropout'],
             kernel_size=synta_params['dur_predictor_kernel'])
         
+        self.length_regulator = LengthRegulator()
+
+        self.transform_layer = nn.Linear(256, 79)
+        
 
     @torch.no_grad()
-    def forward(self, x, x_lengths, n_timesteps, graph_lst, etypes_lst, temperature=1.0, stoc=False, spk=None, length_scale=1.0):
+    def forward(self, x, x_lengths, word_tokens, ph2word, mel2word, mel2ph,
+                graph_lst, etypes_lst, n_timesteps, temperature=1.0, stoc=False, spk=None, length_scale=1.0):
         """
         Generates mel-spectrogram from text. Returns:
             1. encoder outputs
@@ -153,22 +158,23 @@ class GradTTSDependencyGraph(BaseModule):
             # Get speaker embedding
             spk = self.spk_emb(spk)
 
+        x_dp = torch.detach(x).cuda()
+
         x = self.emb(x) * math.sqrt(self.n_enc_channels)
         x = torch.transpose(x, 1, -1)
         x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.size(2)), 1).to(x.dtype)
 
-        x_dp = torch.detach(x)
-
         # Get encoder_outputs `mu_x` and log-scaled token durations `logw`
         mu_x, tgt_nonpadding = self.run_text_encoder(
-            txt_tokens, word_tokens, ph2word, x_lengths.max(), mel2word, mel2ph, ret, graph_lst=graph_lst, etypes_lst=etypes_lst)
+            x_dp, x_lengths, word_tokens, ph2word, x_lengths.max(), mel2word, mel2ph, ret, graph_lst=graph_lst, etypes_lst=etypes_lst)
 
-        logw = self.proj_w(x_dp, x_mask, reverse=True)
+        logw = ret['dur']
 
         mu_x = mu_x * tgt_nonpadding
 
         w = torch.exp(logw) * x_mask
         w_ceil = torch.ceil(w) * length_scale
+
         y_lengths = torch.clamp_min(torch.sum(w_ceil, [1, 2]), 1).long()
         y_max_length = int(y_lengths.max())
         y_max_length_ = fix_len_compatibility(y_max_length)
@@ -176,10 +182,12 @@ class GradTTSDependencyGraph(BaseModule):
         # Using obtained durations `w` construct alignment map `attn`
         y_mask = sequence_mask(y_lengths, y_max_length_).unsqueeze(1).to(x_mask.dtype)
         attn_mask = x_mask.unsqueeze(-1) * y_mask.unsqueeze(2)
-        attn = generate_path(w_ceil.squeeze(1), attn_mask.squeeze(1)).unsqueeze(1)
+        attn = generate_path(logw, attn_mask.squeeze(1)).unsqueeze(1)
+
+        mu_x = self.transform_layer(mu_x).transpose(1, 2)
 
         # Align encoded text and get mu_y
-        mu_y = torch.matmul(attn.squeeze(1).transpose(1, 2), mu_x.transpose(1, 2))
+        mu_y = torch.matmul(attn.squeeze(1).transpose(1, 2), mu_x)
         mu_y = mu_y.transpose(1, 2)
         encoder_outputs = mu_y[:, :, :y_max_length]
 
@@ -187,158 +195,11 @@ class GradTTSDependencyGraph(BaseModule):
         z = mu_y + torch.randn_like(mu_y, device=mu_y.device) / temperature
         # Generate sample by performing reverse dynamics
 
-        # decoder_outputs = self.decoder(z, y_mask, mu_y, n_timesteps, stoc, spk)
-
         decoder_outputs = self.decoder(z, y_mask, mu_y, n_timesteps, stoc, spk)
         decoder_outputs = decoder_outputs[:, :, :y_max_length]
-
-        # return encoder_outputs, decoder_outputs, attn[:, :, :y_max_length]
-
     
         return encoder_outputs, decoder_outputs, attn[:, :, :y_max_length], ret
-
-    def build_embedding(self, dictionary, embed_dim):
-        num_embeddings = len(dictionary)
-        emb = Embedding(num_embeddings, embed_dim, self.padding_idx)
-        return emb
-
-    def run_text_encoder(self, txt_tokens, word_tokens, ph2word, word_len, mel2word, mel2ph, ret, graph_lst, etypes_lst):
-        word2word = torch.arange(word_len)[None, :].to(ph2word.device) + 1  # [B, T_mel, T_word]
-        src_nonpadding = (txt_tokens > 0).float()[:, :, None]
-        if self.synta_params['use_word_encoder']:
-            ph_encoder_out = ph_encoder_out + expand_states(word_encoder_out, ph2word)
-        
-        dur_input = ph_encoder_out * src_nonpadding
-        if self.synta_params['dur_level'] == 'word':
-            word_encoder_out = 0
-            h_ph_gb_word = group_hidden_by_segs(ph_encoder_out, ph2word, word_len)[0]
-            word_encoder_out = word_encoder_out + self.ph2word_encoder(h_ph_gb_word)
-            if self.synta_params['use_word_encoder']:
-                word_encoder_out = word_encoder_out + self.word_encoder(word_tokens)
-            mel2word = self.forward_dur(dur_input, mel2word, ret, ph2word=ph2word, word_len=word_len, graph_lst=graph_lst, etypes_lst=etypes_lst)
-            mel2word = clip_mel2token_to_multiple(mel2word, self.synta_params['frames_multiple'])
-            ret['mel2word'] = mel2word
-            tgt_nonpadding = (mel2word > 0).float()[:, :, None]
-            enc_pos = self.get_pos_embed(word2word, ph2word)  # [B, T_ph, H]
-            dec_pos = self.get_pos_embed(word2word, mel2word)  # [B, T_mel, H]
-            dec_word_mask = build_word_mask(mel2word, ph2word)  # [B, T_mel, T_ph]
-            x, weight = self.attention(ph_encoder_out, enc_pos, word_encoder_out, dec_pos, mel2word, dec_word_mask)
-            if self.synta_params['add_word_pos']:
-                x = x + self.word_pos_proj(dec_pos)
-            ret['attn'] = weight
-        else:
-            mel2ph = self.forward_dur(dur_input, mel2ph, ret)
-            mel2ph = clip_mel2token_to_multiple(mel2ph, self.synta_params['frames_multiple'])
-            mel2word = mel2ph_to_mel2word(mel2ph, ph2word)
-            x = expand_states(ph_encoder_out, mel2ph)
-            if self.synta_params['add_word_pos']:
-                dec_pos = self.get_pos_embed(word2word, mel2word)  # [B, T_mel, H]
-                x = x + self.word_pos_proj(dec_pos)
-            tgt_nonpadding = (mel2ph > 0).float()[:, :, None]
-        if self.synta_params['use_word_encoder']:
-            x = x + expand_states(word_encoder_out, mel2word)
-        return x, tgt_nonpadding
-
-    def attention(self, ph_encoder_out, enc_pos, word_encoder_out, dec_pos, mel2word, dec_word_mask):
-        ph_kv = self.enc_pos_proj(torch.cat([ph_encoder_out, enc_pos], -1))
-        word_enc_out_expend = expand_states(word_encoder_out, mel2word)
-        word_enc_out_expend = torch.cat([word_enc_out_expend, dec_pos], -1)
-        if self.synta_params['text_encoder_postnet']:
-            word_enc_out_expend = self.dec_res_proj(word_enc_out_expend)
-            word_enc_out_expend = self.text_encoder_postnet(word_enc_out_expend)
-            dec_q = x_res = word_enc_out_expend
-        else:
-            dec_q = self.dec_query_proj(word_enc_out_expend)
-            x_res = self.dec_res_proj(word_enc_out_expend)
-        ph_kv, dec_q = ph_kv.transpose(0, 1), dec_q.transpose(0, 1)
-        x, (weight, _) = self.attn(dec_q, ph_kv, ph_kv, attn_mask=(1 - dec_word_mask) * -1e9)
-        x = x.transpose(0, 1)
-        x = x + x_res
-        return x, weight
-
-    def run_decoder(self, x, tgt_nonpadding, ret, infer, tgt_mels=None, global_step=0,
-                    mel2word=None, ph2word=None, graph_lst=None, etypes_lst=None):
-        if not self.synta_params['use_fvae']:
-            x = self.decoder(x)
-            x = self.mel_out(x)
-            ret['kl'] = 0
-            return x * tgt_nonpadding
-        else:
-            # x is the phoneme encoding
-            x = x.transpose(1, 2)  # [B, H, T]
-            tgt_nonpadding_BHT = tgt_nonpadding.transpose(1, 2)  # [B, H, T]
-            if infer:
-                z = self.fvae(cond=x, infer=True, mel2word=mel2word, ph2word=ph2word, graph_lst=graph_lst, etypes_lst=etypes_lst)
-            else:
-                tgt_mels = tgt_mels.transpose(1, 2)  # [B, 80, T]
-                z, ret['kl'], ret['z_p'], ret['m_q'], ret['logs_q'] = self.fvae(
-                    tgt_mels, tgt_nonpadding_BHT, cond=x, mel2word=mel2word, ph2word=ph2word, graph_lst=graph_lst, etypes_lst=etypes_lst)
-                if global_step < self.synta_params['posterior_start_steps']:
-                    z = torch.randn_like(z)
-            x_recon = self.fvae.decoder(z, nonpadding=tgt_nonpadding_BHT, cond=x).transpose(1, 2)
-            ret['pre_mel_out'] = x_recon
-            return x_recon
-
-    def forward_dur(self, dur_input, mel2word, ret, **kwargs):
-        """
-
-        :param dur_input: [B, T_txt, H]
-        :param mel2ph: [B, T_mel]
-        :param txt_tokens: [B, T_txt]
-        :param ret:
-        :return:
-        """
-        word_len = kwargs['word_len']
-        ph2word = kwargs['ph2word']
-        graph_lst = kwargs['graph_lst']
-        etypes_lst = kwargs['etypes_lst']
-        src_padding = dur_input.data.abs().sum(-1) == 0
-        dur_input = dur_input.detach() + self.synta_params['predictor_grad'] * (dur_input - dur_input.detach())
-        dur = self.dur_predictor(dur_input, src_padding, ph2word, graph_lst, etypes_lst)
-
-        B, T_ph = ph2word.shape
-        dur = torch.zeros([B, word_len.max() + 1]).to(ph2word.device).scatter_add(1, ph2word, dur)
-        dur = dur[:, 1:]
-        ret['dur'] = dur
-        if mel2word is None:
-            mel2word = self.length_regulator(dur).detach()
-        return mel2word
-
-    def get_pos_embed(self, word2word, x2word):
-        x_pos = build_word_mask(word2word, x2word).float()  # [B, T_word, T_ph]
-        x_pos = (x_pos.cumsum(-1) / x_pos.sum(-1).clamp(min=1)[..., None] * x_pos).sum(1)
-        x_pos = self.sin_pos(x_pos.float())  # [B, T_ph, H]
-        return x_pos
-
-    def store_inverse_all(self):
-        def remove_weight_norm(m):
-            try:
-                if hasattr(m, 'store_inverse'):
-                    m.store_inverse()
-                nn.utils.remove_weight_norm(m)
-            except ValueError:  # this module didn't have weight norm
-                return
-
-        self.apply(remove_weight_norm)
-
-    def add_dur_loss(self, dur_pred, mel2token, word_len):
-        T = word_len.max()
-        dur_gt = mel2token_to_dur(mel2token, T).float()
-        nonpadding = (torch.arange(T).to(dur_pred.device)[None, :] < word_len[:, None]).float()
-        dur_pred = dur_pred * nonpadding
-        dur_gt = dur_gt * nonpadding
-        wdur = F.l1_loss((dur_pred + 1).log(), (dur_gt + 1).log(), reduction='none')
-        wdur = (wdur * nonpadding).sum() / nonpadding.sum()
-        if self.synta_params['lambda_word_dur'] > 0:
-            return wdur * self.synta_params['lambda_word_dur']
-        if self.synta_params['lambda_sent_dur'] > 0:
-            sent_dur_p = dur_pred.sum(-1)
-            sent_dur_g = dur_gt.sum(-1)
-            sdur_loss = F.l1_loss(sent_dur_p, sent_dur_g, reduction='mean')
-
-            return sdur_loss.mean() * self.synta_params['lambda_sent_dur']
-
-
+    
     def compute_loss(self, x, x_lengths, y, y_lengths, dur_pred, spk=None, out_size=None):
         """
         Computes 3 losses:
@@ -359,9 +220,15 @@ class GradTTSDependencyGraph(BaseModule):
         if self.n_spks > 1:
             # Get speaker embedding
             spk = self.spk_emb(spk)
+
+        x_dp = torch.detach(x).cuda()
+
+        x = self.emb(x.long()) * math.sqrt(self.n_enc_channels)
+        x = torch.transpose(x, 1, -1)
+        x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.size(2)), 1).to(x.dtype)
         
         # Get encoder_outputs `mu_x` and log-scaled token durations `logw`
-        mu_x, x_dp, x_mask = self.encoder(x, x_lengths, spk)
+        mu_x = self.encoder(x.long(), x_lengths)
         y_max_length = y.shape[-1]
 
         y_mask = sequence_mask(y_lengths, y_max_length).unsqueeze(1).to(x_mask)
@@ -383,7 +250,9 @@ class GradTTSDependencyGraph(BaseModule):
         logw = self.proj_w(x_dp, x_mask, w)
         l_lengths = logw / torch.sum(x_mask)
 
-        dur_loss = self.add_dur_loss(dur_pred, mel2token, word_len)
+        mel2token = self.length_regulator(dur_pred)
+
+        dur_loss = self.add_dur_loss(dur_pred, mel2token, l_lengths)
         # dur_loss = torch.sum(l_lengths) - torch.tensor([1])[0]
 
         # _, ids_str = rand_slice_segments(y)
@@ -429,6 +298,159 @@ class GradTTSDependencyGraph(BaseModule):
         # return dur_loss, prior_loss, diff_loss
     
         return dur_loss, prior_loss, diff_loss
+
+    def build_embedding(self, dictionary, embed_dim):
+        num_embeddings = len(dictionary)
+        emb = Embedding(num_embeddings, embed_dim, self.padding_idx)
+        return emb
+
+    def run_text_encoder(self, txt_tokens, x_lengths, word_tokens, ph2word, word_len, mel2word, mel2ph, ret, graph_lst, etypes_lst):
+        word2word = torch.arange(word_len)[None, :].to(ph2word.device) + 1  # [B, T_mel, T_word]
+        src_nonpadding = (txt_tokens > 0).float()[:, :, None]
+
+        mu = self.encoder(txt_tokens, x_lengths)
+
+        ph_encoder_out = mu * src_nonpadding
+        # if self.synta_params['use_word_encoder']:
+        #     word_encoder_out = self.word_encoder(word_tokens)
+        #     ph_encoder_out = ph_encoder_out + expand_states(word_encoder_out, ph2word)
+        
+        dur_input = ph_encoder_out * src_nonpadding
+        if self.synta_params['dur_level'] == 'word':
+            word_encoder_out = 0
+            h_ph_gb_word = group_hidden_by_segs(ph_encoder_out, ph2word, word_len)[0]
+            word_encoder_out = word_encoder_out + self.ph2word_encoder(h_ph_gb_word)
+            # if self.synta_params['use_word_encoder']:
+            #     word_encoder_out = word_encoder_out + self.word_encoder(word_tokens)
+            mel2word = self.forward_dur(dur_input, mel2word, ret, ph2word=ph2word, word_len=word_len, graph_lst=graph_lst, etypes_lst=etypes_lst)
+            mel2word = clip_mel2token_to_multiple(mel2word, self.synta_params['frames_multiple'])
+            ret['mel2word'] = mel2word
+            tgt_nonpadding = (mel2word > 0).float()[:, :, None]
+            enc_pos = self.get_pos_embed(word2word, ph2word)  # [B, T_ph, H]
+            dec_pos = self.get_pos_embed(word2word, mel2word)  # [B, T_mel, H]
+            dec_word_mask = build_word_mask(mel2word, ph2word)  # [B, T_mel, T_ph]
+            x, weight = self.attention(ph_encoder_out, enc_pos, word_encoder_out, dec_pos, mel2word, dec_word_mask)
+            # if self.synta_params['add_word_pos']:
+            #     x = x + self.word_pos_proj(dec_pos)
+            ret['attn'] = weight
+        else:
+            mel2ph = self.forward_dur(dur_input, mel2ph, ret)
+            mel2ph = clip_mel2token_to_multiple(mel2ph, self.synta_params['frames_multiple'])
+            mel2word = mel2ph_to_mel2word(mel2ph, ph2word)
+            x = expand_states(ph_encoder_out, mel2ph)
+            if self.synta_params['add_word_pos']:
+                dec_pos = self.get_pos_embed(word2word, mel2word)  # [B, T_mel, H]
+                x = x + self.word_pos_proj(dec_pos)
+            tgt_nonpadding = (mel2ph > 0).float()[:, :, None]
+        # if self.synta_params['use_word_encoder']:
+        #     x = x + expand_states(word_encoder_out, mel2word)
+
+        return x, tgt_nonpadding
+
+    def attention(self, ph_encoder_out, enc_pos, word_encoder_out, dec_pos, mel2word, dec_word_mask):
+        ph_kv = self.enc_pos_proj(torch.cat([ph_encoder_out, enc_pos], -1))
+        word_enc_out_expend = expand_states(word_encoder_out, mel2word)
+        word_enc_out_expend = torch.cat([word_enc_out_expend, dec_pos], -1)
+        if self.synta_params['text_encoder_postnet']:
+            word_enc_out_expend = self.dec_res_proj(word_enc_out_expend)
+            word_enc_out_expend = self.text_encoder_postnet(word_enc_out_expend)
+            dec_q = x_res = word_enc_out_expend
+        else:
+            dec_q = self.dec_query_proj(word_enc_out_expend)
+            x_res = self.dec_res_proj(word_enc_out_expend)
+        ph_kv, dec_q = ph_kv.transpose(0, 1), dec_q.transpose(0, 1)
+        x, (weight, _) = self.attn(dec_q, ph_kv, ph_kv, attn_mask=(1 - dec_word_mask) * -1e9)
+        x = x.transpose(0, 1)
+        x = x + x_res
+
+        return x, weight
+
+    def run_decoder(self, x, tgt_nonpadding, ret, infer, tgt_mels=None, global_step=0,
+                    mel2word=None, ph2word=None, graph_lst=None, etypes_lst=None):
+        if not self.synta_params['use_fvae']:
+            x = self.decoder(x)
+            x = self.mel_out(x)
+            ret['kl'] = 0
+            return x * tgt_nonpadding
+        else:
+            # x is the phoneme encoding
+            x = x.transpose(1, 2)  # [B, H, T]
+            tgt_nonpadding_BHT = tgt_nonpadding.transpose(1, 2)  # [B, H, T]
+            if infer:
+                z = self.fvae(cond=x, infer=True, mel2word=mel2word, ph2word=ph2word, graph_lst=graph_lst, etypes_lst=etypes_lst)
+            else:
+                tgt_mels = tgt_mels.transpose(1, 2)  # [B, 80, T]
+                z, ret['kl'], ret['z_p'], ret['m_q'], ret['logs_q'] = self.fvae(
+                    tgt_mels, tgt_nonpadding_BHT, cond=x, mel2word=mel2word, ph2word=ph2word, graph_lst=graph_lst, etypes_lst=etypes_lst)
+                if global_step < self.synta_params['posterior_start_steps']:
+                    z = torch.randn_like(z)
+            x_recon = self.fvae.decoder(z, nonpadding=tgt_nonpadding_BHT, cond=x).transpose(1, 2)
+            ret['pre_mel_out'] = x_recon
+            
+            return x_recon
+
+    def forward_dur(self, dur_input, mel2word, ret, **kwargs):
+        """
+
+        :param dur_input: [B, T_txt, H]
+        :param mel2ph: [B, T_mel]
+        :param txt_tokens: [B, T_txt]
+        :param ret:
+        :return:
+        """
+        word_len = kwargs['word_len']
+        ph2word = kwargs['ph2word']
+        graph_lst = kwargs['graph_lst']
+        etypes_lst = kwargs['etypes_lst']
+        src_padding = dur_input.data.abs().sum(-1) == 0
+        dur_input = dur_input.detach() + self.synta_params['predictor_grad'] * (dur_input - dur_input.detach())
+        dur = self.proj_w(dur_input, src_padding, ph2word, graph_lst, etypes_lst)
+
+        ret['orig_dur'] = dur
+
+        B, T_ph = ph2word.shape
+        dur = torch.zeros([B, word_len.max() + 1]).to(ph2word.device).scatter_add(1, ph2word, dur)
+        dur = dur[:, 1:]
+        ret['dur'] = dur
+        if mel2word is None:
+            mel2word = self.length_regulator(dur).detach()
+
+        return mel2word
+
+    def get_pos_embed(self, word2word, x2word):
+        x_pos = build_word_mask(word2word, x2word).float()  # [B, T_word, T_ph]
+        x_pos = (x_pos.cumsum(-1) / x_pos.sum(-1).clamp(min=1)[..., None] * x_pos).sum(1)
+        x_pos = self.sin_pos(x_pos.float())  # [B, T_ph, H]
+        
+        return x_pos
+
+    def store_inverse_all(self):
+        def remove_weight_norm(m):
+            try:
+                if hasattr(m, 'store_inverse'):
+                    m.store_inverse()
+                nn.utils.remove_weight_norm(m)
+            except ValueError:  # this module didn't have weight norm
+                return
+
+        self.apply(remove_weight_norm)
+
+    def add_dur_loss(self, dur_pred, mel2token, word_len):
+        T = word_len.max()
+        dur_gt = mel2token_to_dur(mel2token, T).float()
+        nonpadding = (torch.arange(T).to(dur_pred.device)[None, :] < word_len[:, None]).float()
+        dur_pred = dur_pred * nonpadding
+        dur_gt = dur_gt * nonpadding
+        wdur = F.l1_loss((dur_pred + 1).log(), (dur_gt + 1).log(), reduction='none')
+        wdur = (wdur * nonpadding).sum() / nonpadding.sum()
+        if self.synta_params['lambda_word_dur'] > 0:
+            return wdur * self.synta_params['lambda_word_dur']
+        if self.synta_params['lambda_sent_dur'] > 0:
+            sent_dur_p = dur_pred.sum(-1)
+            sent_dur_g = dur_gt.sum(-1)
+            sdur_loss = F.l1_loss(sent_dur_p, sent_dur_g, reduction='mean')
+
+            return sdur_loss.mean() * self.synta_params['lambda_sent_dur']
 
 
 class GradTTSStft(BaseModule):
@@ -704,6 +726,9 @@ class GradTTSSDP(BaseModule):
         attn_mask = x_mask.unsqueeze(-1) * y_mask.unsqueeze(2)
         attn = generate_path(w_ceil.squeeze(1), attn_mask.squeeze(1)).unsqueeze(1)
 
+        print(attn.squeeze(1).transpose(1, 2).shape)
+        print(mu_x.transpose(1, 2).shape)
+
         # Align encoded text and get mu_y
         mu_y = torch.matmul(attn.squeeze(1).transpose(1, 2), mu_x.transpose(1, 2))
         mu_y = mu_y.transpose(1, 2)
@@ -720,7 +745,7 @@ class GradTTSSDP(BaseModule):
     
 
 
-    def compute_loss(self, x, x_lengths, y, y_lengths, y_mb, y_hat_mb, fft_sizes, hop_sizes, win_lengths, spk=None, out_size=None):
+    def compute_loss(self, x, x_lengths, y, y_lengths, spk=None, out_size=None):
         """
         Computes 3 losses:
             1. duration loss: loss between predicted token durations and those extracted by Monotinic Alignment Search (MAS).

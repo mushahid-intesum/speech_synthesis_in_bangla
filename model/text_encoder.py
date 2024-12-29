@@ -310,7 +310,7 @@ class TextEncoder(BaseModule):
                                         kernel_size, p_dropout)
 
     def forward(self, x, x_lengths, spk=None):
-        x = self.emb(x) * math.sqrt(self.n_channels)
+        x = self.emb(x.long()) * math.sqrt(self.n_channels)
         x = torch.transpose(x, 1, -1)
         x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.size(2)), 1).to(x.dtype)
 
@@ -324,3 +324,6 @@ class TextEncoder(BaseModule):
         # logw = self.proj_w(x_dp, x_mask)
 
         return mu, x_dp, x_mask
+
+def is_sil_phoneme(p):
+    return p == '' or not p.isalpha()

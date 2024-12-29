@@ -10,9 +10,9 @@ from model.utils import fix_len_compatibility
 
 
 # data parameters
-train_filelist_path = '/kaggle/input/bntts-data/resources/resources/data/train.txt'
-valid_filelist_path = '/kaggle/input/bntts-data/resources/resources/data/val.txt'
-test_filelist_path = '/kaggle/input/bntts-data/resources/resources/data/test.txt'
+train_filelist_path = '/mnt/Stuff/TTS/speech_synthesis_in_bangla-master/resources/data/train.txt'
+valid_filelist_path = '/mnt/Stuff/TTS/speech_synthesis_in_bangla-master/resources/data/val.txt'
+test_filelist_path = '/mnt/Stuff/TTS/speech_synthesis_in_bangla-master/resources/data/test.txt'
 cmudict_path = './resources/cmu_dictionary'
 add_blank = True
 n_mels = 80
@@ -27,7 +27,7 @@ f_min = 0
 f_max = 8000
 
 # encoder parameters
-n_enc_channels = 192
+n_enc_channels = 256
 filter_channels = 768
 filter_channels_dp = 256
 n_enc_layers = 6
@@ -46,7 +46,7 @@ pe_scale = 1000  # 1 for `grad-tts-old.pt` checkpoint
 log_dir = 'logs/multistream_stft_diffusion'
 test_size = 4
 n_epochs = 100
-batch_size = 16
+batch_size = 1
 learning_rate = 1e-4
 seed = 37
 save_every = 1
@@ -95,3 +95,60 @@ stft_loss_config = {
 
 segment_size = 8192
 hop_length = 256
+
+synta_params = {
+    "hidden_size": 192,
+    "ffn_hidden_size": 768,
+    "enc_ffn_kernel_size": 5,
+    "enc_layers": 4,
+    "dur_level": "word",
+    "encoder_type": "rel_fft",
+    "use_word_encoder": True,
+    "num_heads": 2,
+
+    "word_enc_layers": 4,
+    "word_encoder_type": "rel_fft",
+    "use_pitch_embed": False,
+    "enc_prenet": True,
+    "enc_pre_ln": True,
+    "text_encoder_postnet": True,
+    "dropout": 0.0,
+    "add_word_pos": True,
+
+    "predictor_hidden": -1,
+    "dur_predictor_kernel": 3,
+    "dur_predictor_layers": 2,
+    "predictor_kernel": 5,
+    "predictor_layers": 5,
+    "predictor_dropout": 0.5,
+    "hidden_size": 256,
+
+    "use_fvae": False,
+
+    "use_prior_flow": True,
+    "prior_flow_hidden": 64,
+    "prior_flow_kernel_size": 3,
+    "prior_flow_n_blocks": 4,
+
+    "lambda_kl": 1.0,
+    "kl_min": 0.0,
+    "lambda_sent_dur": 0.0,
+    "kl_start_steps": 10000,
+    "posterior_start_steps": 0,
+    "frames_multiple": 4,
+    "num_valid_plots": 10,
+    "lr": 0.0002,
+    "warmup_updates": 8000,
+    "max_tokens": 40000,
+    "valid_infer_interval": 10000,
+    "max_sentences": 80,
+    "max_updates": 480000,
+
+    "min_sil_duration": 0.1,
+    "processed_data_dir": './resources/process',
+    "sample_rate": 22050,
+    "hop_length": 256,
+    "max_frames": 1548,
+    "max_input_tokens": 1550,
+    "predictor_grad": 0.1
+}

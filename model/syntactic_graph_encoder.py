@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# import dgl
-# from dgl.nn.pytorch import GatedGraphConv
+import dgl
+from dgl.nn.pytorch import GatedGraphConv
 
 def sequence_mask(lengths, maxlen, dtype=torch.bool):
     if maxlen is None:
@@ -32,17 +32,17 @@ def group_hidden_by_segs(h, seg_ids, max_len):
 class GraphAuxEnc(nn.Module):
     def __init__(self, in_dim, hid_dim, out_dim, n_iterations=5, n_edge_types=6):
         super(GraphAuxEnc, self).__init__()
-        # self.in_dim = in_dim
-        # self.hid_dim = hid_dim
-        # self.out_dim = out_dim
-        # self.skip_connect = True
-        # self.dropout_after_gae = False
+        self.in_dim = in_dim
+        self.hid_dim = hid_dim
+        self.out_dim = out_dim
+        self.skip_connect = True
+        self.dropout_after_gae = False
 
-        # self.ggc_1 = GatedGraphConv(in_feats=in_dim, out_feats=hid_dim
-        #                             , n_steps=n_iterations, n_etypes=n_edge_types)
-        # self.ggc_2 = GatedGraphConv(in_feats=hid_dim, out_feats=out_dim
-        #                             , n_steps=n_iterations, n_etypes=n_edge_types)
-        # self.dropout = nn.Dropout(p=0.5)
+        self.ggc_1 = GatedGraphConv(in_feats=in_dim, out_feats=hid_dim
+                                    , n_steps=n_iterations, n_etypes=n_edge_types)
+        self.ggc_2 = GatedGraphConv(in_feats=hid_dim, out_feats=out_dim
+                                    , n_steps=n_iterations, n_etypes=n_edge_types)
+        self.dropout = nn.Dropout(p=0.5)
 
     @staticmethod
     def ph_encoding_to_word_encoding(ph_encoding, ph2word, word_len):
@@ -139,27 +139,27 @@ class GraphAuxEnc(nn.Module):
         ph2word: [list of list[1,2,2,2,3,3,3]]
         etypes_lst: [list of etypes]; etypes: torch.LongTensor
         """
-        # t_p = ph_encoding.shape[-1]
-        # ph_encoding = ph_encoding.transpose(1,2) # [batch, t_p, hid]
-        # word_len = torch.tensor([g.num_nodes() for g in graph_lst]).reshape([-1])
-        # batched_graph = dgl.batch(graph_lst)
-        # inp, batched_word_encoding, has_word_row_idx = self._process_ph_to_word_encoding(ph_encoding, ph2word,
-        #                                                                                  word_len=word_len)  # [num_nodes_in_batch, in_dim]
-        # bs, t_w, hid = batched_word_encoding.shape
-        # batched_etypes = torch.cat(etypes_lst)  # [num_edges_in_batch, 1]
-        # gcc1_out = self.ggc_1(batched_graph, inp, batched_etypes)
-        # gcc2_out = self.ggc_2(batched_graph, gcc1_out, batched_etypes)  # [num_nodes_in_batch, hin]
-        # # skip connection 
-        # gcc2_out = inp + gcc1_out + gcc2_out # [n_nodes, hid]
+        t_p = ph_encoding.shape[-1]
+        ph_encoding = ph_encoding.transpose(1,2) # [batch, t_p, hid]
+        word_len = torch.tensor([g.num_nodes() for g in graph_lst]).reshape([-1])
+        batched_graph = dgl.batch(graph_lst)
+        inp, batched_word_encoding, has_word_row_idx = self._process_ph_to_word_encoding(ph_encoding, ph2word,
+                                                                                         word_len=word_len)  # [num_nodes_in_batch, in_dim]
+        bs, t_w, hid = batched_word_encoding.shape
+        batched_etypes = torch.cat(etypes_lst)  # [num_edges_in_batch, 1]
+        gcc1_out = self.ggc_1(batched_graph, inp, batched_etypes)
+        gcc2_out = self.ggc_2(batched_graph, gcc1_out, batched_etypes)  # [num_nodes_in_batch, hin]
+        # skip connection 
+        gcc2_out = inp + gcc1_out + gcc2_out # [n_nodes, hid]
         
-        # output = torch.zeros([bs * t_w, hid]).to(gcc2_out.device)
-        # output[has_word_row_idx] = gcc2_out
-        # output = output.reshape([bs, t_w, hid])
-        # word_level_output = output
-        # output = self._postprocess_word2ph(word_level_output, ph2word, t_p)  # [batch, t_p, hid]
-        # output = torch.transpose(output, 1, 2)
+        output = torch.zeros([bs * t_w, hid]).to(gcc2_out.device)
+        output[has_word_row_idx] = gcc2_out
+        output = output.reshape([bs, t_w, hid])
+        word_level_output = output
+        output = self._postprocess_word2ph(word_level_output, ph2word, t_p)  # [batch, t_p, hid]
+        output = torch.transpose(output, 1, 2)
 
-        # if return_word_encoding:
-        #     return output, torch.transpose(word_level_output, 1, 2)
-        # else:
-        #     return output
+        if return_word_encoding:
+            return output, torch.transpose(word_level_output, 1, 2)
+        else:
+            return output

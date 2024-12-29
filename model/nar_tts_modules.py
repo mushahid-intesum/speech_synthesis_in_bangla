@@ -16,7 +16,7 @@ class DurationPredictor(torch.nn.Module):
             self.conv += [torch.nn.Sequential(
                 torch.nn.Conv1d(in_chans, n_chans, kernel_size, stride=1, padding=kernel_size // 2),
                 torch.nn.ReLU(),
-                LayerNorm(n_chans, dim=1),
+                LayerNorm(n_chans),
                 torch.nn.Dropout(dropout_rate)
             )]
         self.linear = nn.Sequential(torch.nn.Linear(n_chans, 1), nn.Softplus())
@@ -47,7 +47,7 @@ class SyntaDurationPredictor(torch.nn.Module):
             self.conv += [torch.nn.Sequential(
                 torch.nn.Conv1d(in_chans, n_chans, kernel_size, stride=1, padding=kernel_size // 2),
                 torch.nn.ReLU(),
-                LayerNorm(n_chans, dim=1),
+                LayerNorm(n_chans),
                 torch.nn.Dropout(dropout_rate)
             )]
         self.linear = nn.Sequential(torch.nn.Linear(n_chans, 1), nn.Softplus())
@@ -66,6 +66,7 @@ class SyntaDurationPredictor(torch.nn.Module):
         x = self.linear(x.transpose(1, -1))  # [B, T, C]
         x = x * (1 - x_padding.float())[:, :, None]  # (B, T, C)
         x = x[..., 0]  # (B, Tmax)
+
         return x
 
 
@@ -117,7 +118,7 @@ class PitchPredictor(torch.nn.Module):
             self.conv += [torch.nn.Sequential(
                 torch.nn.Conv1d(in_chans, n_chans, kernel_size, padding=kernel_size // 2),
                 torch.nn.ReLU(),
-                LayerNorm(n_chans, dim=1),
+                LayerNorm(n_chans),
                 torch.nn.Dropout(dropout_rate)
             )]
         self.linear = torch.nn.Linear(n_chans, odim)

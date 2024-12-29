@@ -1,7 +1,7 @@
 import os
 import random
 from pathlib import Path
-import shutil
+import pickle
 
 def create_dataset_splits(wav_dir, text_dir, output_dir, train_ratio=0.8, val_ratio=0.1, test_ratio=0.1):
     """
@@ -24,6 +24,7 @@ def create_dataset_splits(wav_dir, text_dir, output_dir, train_ratio=0.8, val_ra
     # Get list of wav files and their corresponding text files
     wav_files = [f for f in os.listdir(wav_dir) if f.endswith('.wav')]
     dataset = []
+    all_words = set()
     
     for wav_file in wav_files:
         # Get the corresponding text file
@@ -34,6 +35,11 @@ def create_dataset_splits(wav_dir, text_dir, output_dir, train_ratio=0.8, val_ra
             with open(text_file, 'r', encoding='utf-8') as f:
                 try:
                     text = f.read().strip()
+
+                    words = text.split(' ')
+                    for word in words:
+                        all_words.add(word)
+                        
                     dataset.append((base_name, text))
                 except UnicodeDecodeError as e:
                     print(f'error in file {text_file}')
@@ -65,6 +71,11 @@ def create_dataset_splits(wav_dir, text_dir, output_dir, train_ratio=0.8, val_ra
             for audio_id, text in split_data:
                 f.write(f"{audio_id}|{text}\n")
         print(f"Created {split_name} set with {len(split_data)} samples")
+
+    all_words_file = f'{output_dir}/all_words.txt'
+    with open(all_words_file, 'w', encoding='utf-8') as f:
+        for item in sorted(all_words):  
+            f.write(str(item) + '\n')
 
 if __name__ == "__main__":
     # Example usage

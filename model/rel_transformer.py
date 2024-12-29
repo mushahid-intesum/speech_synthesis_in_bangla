@@ -346,7 +346,7 @@ class RelTransformerEncoder(nn.Module):
         self.block_length = block_length
         self.prenet = prenet
         if n_vocab > 0:
-            self.emb = Embedding(n_vocab, hidden_channels, padding_idx=0)
+            self.emb = torch.nn.Embedding(n_vocab, hidden_channels)
 
         if prenet:
             self.pre = ConvReluNorm(hidden_channels, hidden_channels, hidden_channels,
