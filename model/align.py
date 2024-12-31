@@ -148,10 +148,11 @@ def mel2token_to_dur(mel2token, T_txt=None, max_dur=None):
     if not is_torch:
         mel2token = torch.LongTensor(mel2token)
     if T_txt is None:
-        T_txt = mel2token.max()
+        T_txt = mel2token.max().item()
     if len(mel2token.shape) == 1:
         mel2token = mel2token[None, ...]
         has_batch_dim = False
+
     B, _ = mel2token.shape
     dur = mel2token.new_zeros(B, T_txt + 1).scatter_add(1, mel2token, torch.ones_like(mel2token))
     dur = dur[:, 1:]

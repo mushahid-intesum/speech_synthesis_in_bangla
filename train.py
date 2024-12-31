@@ -101,6 +101,9 @@ if __name__ == "__main__":
                         num_workers=0, shuffle=False)
     
     test_dataset = TextMelGraphDataset(synta_params, valid_filelist_path, word_dict)
+    test_loader = DataLoader(dataset=test_dataset, batch_size=batch_size,
+                        collate_fn=batch_collate, drop_last=True,
+                        num_workers=0, shuffle=False)
 
     # print('Initializing data loaders...')
     # train_dataset = TextMelDataset(train_filelist_path, add_blank,
@@ -186,7 +189,7 @@ if __name__ == "__main__":
                 y_enc, y_dec, attn, ret = model(x, x_lengths, word_tokens, ph2word,
                                                 mel2word, mel2ph, graph_lst, etypes_lst, n_timesteps=50)
                 dur_loss, prior_loss, diff_loss = model.compute_loss(x, x_lengths,
-                                                                     y, y_lengths, ret['dur'],
+                                                                     y, y_lengths, ret,
                                                                      out_size=out_size)
                 loss = sum([dur_loss, prior_loss, diff_loss])
 
@@ -252,42 +255,45 @@ if __name__ == "__main__":
         model.eval()
         print('Synthesis...')
         with torch.no_grad():
-            for i, item in enumerate(test_batch):
-                x, x_lengths = item['x'].to(device), item['x_lengths'].to(device)
-                word_tokens = item['word_tokens'].to(device)
-                mel2ph = item['mel2ph'].to(device)
-                mel2word = item['mel2word'].to(device)
-                ph2word = item['ph2word'].to(device)
-                graph_lst = item['graph_lst']
-                etypes_lst = item['etypes_lst']
-                # x = item['x'].to(torch.long).unsqueeze(0).to(device)
-                # x_lengths = torch.LongTensor([x.shape[-1]]).to(device)
+            with tqdm(test_loader, total=len(test_dataset)//batch_size) as progress_bar:
+                for batch_idx, item in enumerate(progress_bar):
+                    x, x_lengths = item['x'].to(device), item['x_lengths'].to(device)
+                    word_tokens = item['word_tokens'].to(device)
+                    mel2ph = item['mel2ph'].to(device)
+                    mel2word = item['mel2word'].to(device)
+                    ph2word = item['ph2word'].to(device)
+                    graph_lst = item['graph_lst']
+                    etypes_lst = item['etypes_lst']
+                    # x = item['x'].to(torch.long).unsqueeze(0).to(device)
+                    # x_lengths = torch.LongTensor([x.shape[-1]]).to(device)
 
-                """ For GradTTSStft """
-                # y_enc, y_dec, attn, _, _ = model(x, x_lengths, n_timesteps=50)
+                    """ For GradTTSStft """
+                    # y_enc, y_dec, attn, _, _ = model(x, x_lengths, n_timesteps=50)
 
-                """Dependency graph model"""
-                y_enc, y_dec, attn, ret = model(x, x_lengths, word_tokens, ph2word,
-                                                mel2word, mel2ph, graph_lst, etypes_lst, n_timesteps=50)
-                """ For other models """
-                # y_enc, y_dec, attn = model(x, x_lengths, n_timesteps=50)
+                    """Dependency graph model"""
+                    y_enc, y_dec, attn, ret = model(x, x_lengths, word_tokens, ph2word,
+                                                    mel2word, mel2ph, graph_lst, etypes_lst, n_timesteps=50)
+                    """ For other models """
+                    # y_enc, y_dec, attn = model(x, x_lengths, n_timesteps=50)
 
 
-                # logger.add_image(f'image_{i}/generated_enc',
-                #                  plot_tensor(y_enc.squeeze().cpu()),
-                #                  global_step=iteration, dataformats='HWC')
-                # logger.add_image(f'image_{i}/generated_dec',
-                #                  plot_tensor(y_dec.squeeze().cpu()),
-                #                  global_step=iteration, dataformats='HWC')
-                # logger.add_image(f'image_{i}/alignment',
-                #                  plot_tensor(attn.squeeze().cpu()),
-                #                  global_step=iteration, dataformats='HWC')
-                save_plot(y_enc.squeeze().cpu(), 
-                          f'{log_dir}/generated_enc_{i}.png')
-                save_plot(y_dec.squeeze().cpu(), 
-                          f'{log_dir}/generated_dec_{i}.png')
-                save_plot(attn.squeeze().cpu(), 
-                          f'{log_dir}/alignment_{i}.png')
+                    # logger.add_image(f'image_{i}/generated_enc',
+                    #                  plot_tensor(y_enc.squeeze().cpu()),
+                    #                  global_step=iteration, dataformats='HWC')
+                    # logger.add_image(f'image_{i}/generated_dec',
+                    #                  plot_tensor(y_dec.squeeze().cpu()),
+                    #                  global_step=iteration, dataformats='HWC')
+                    # logger.add_image(f'image_{i}/alignment',
+                    #                  plot_tensor(attn.squeeze().cpu()),
+                    #                  global_step=iteration, dataformats='HWC')
+                    save_plot(y_enc.squeeze().cpu(), 
+                            f'{log_dir}/generated_enc_{i}.png')
+                    save_plot(y_dec.squeeze().cpu(), 
+                            f'{log_dir}/generated_dec_{i}.png')
+                    save_plot(attn.squeeze().cpu(), 
+                            f'{log_dir}/alignment_{i}.png')
+                    
+                    break
 
         ckpt = model.state_dict()
         torch.save(ckpt, f=f"{log_dir}/grad_{epoch}.pt")

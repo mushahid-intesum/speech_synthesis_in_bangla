@@ -11,7 +11,7 @@ import random
 
 import torch
 from torch import nn
-import torch.functional as F
+import torch.nn.functional as F
 
 from model.base import BaseModule
 from model.text_encoder import TextEncoder
@@ -19,7 +19,6 @@ from model.diffusion import Diffusion, StftDiffusion
 from model.utils import sequence_mask, generate_path, duration_loss, fix_len_compatibility, maximum_path_numpy
 from model.text_encoder import TextEncoder, DurationPredictor
 from model.stochastic_duration_predictor import StochasticDurationPredictor
-from model.context_predictor import ContextPredictorResnet
 from model.commons import rand_slice_segments, slice_segments
 from model.stft_loss import MultiResolutionSTFTLoss
 from model.pqmf import PQMF
@@ -59,13 +58,77 @@ class SinusoidalPosEmb(nn.Module):
         emb = x[:, :, None] * emb[None, :]
         emb = torch.cat((emb.sin(), emb.cos()), dim=-1)
         return emb
-
+    
+class DynamicProjectionLayer(nn.Module):
+    def __init__(self, output_dim=80):
+        """
+        Initialize a projection layer that can handle dynamically changing input dimensions.
+        This layer projects any input dimension X to a fixed output dimension while maintaining
+        the batch and sequence dimensions.
+        
+        Args:
+            output_dim (int): The desired output dimension (default: 80)
+        """
+        super().__init__()
+        self.output_dim = output_dim
+        # Store the last used projection matrix for efficiency
+        self.last_input_dim = None
+        self.projection = None
+        
+    def _create_projection_matrix(self, input_dim, device):
+        """
+        Creates a new projection matrix for the current input dimension.
+        Uses scaled initialization to maintain variance across different input sizes.
+        
+        Args:
+            input_dim (int): Current input dimension
+            device: Device to create the matrix on
+        """
+        # Initialize the weight matrix with scaled initialization
+        scale = math.sqrt(2.0 / (input_dim + self.output_dim))
+        weight = torch.randn(self.output_dim, input_dim, device=device) * scale
+        bias = torch.zeros(self.output_dim, device=device)
+        
+        return weight, bias
+    
+    def forward(self, x):
+        """
+        Forward pass that adapts to any input dimension X.
+        
+        Args:
+            x (torch.Tensor): Input tensor of shape [B, X, Y] where X can vary between calls
+            
+        Returns:
+            torch.Tensor: Output tensor of shape [B, output_dim, Y]
+        """
+        batch_size, input_dim, sequence_length = x.shape
+        
+        # Check if we need to create a new projection matrix
+        if self.last_input_dim != input_dim:
+            # Create new projection weights for this input dimension
+            weight, bias = self._create_projection_matrix(input_dim, x.device)
+            self.weight = weight
+            self.bias = bias
+            self.last_input_dim = input_dim
+        
+        # Reshape and apply projection
+        x_reshaped = x.permute(0, 2, 1)  # [B, Y, X]
+        x_flat = x_reshaped.reshape(-1, input_dim)  # [B*Y, X]
+        
+        # Apply linear transformation manually
+        output = torch.matmul(x_flat, self.weight.t()) + self.bias  # [B*Y, output_dim]
+        
+        # Reshape back to original structure
+        output = output.reshape(batch_size, sequence_length, self.output_dim)  # [B, Y, output_dim]
+        output = output.permute(0, 2, 1)  # [B, output_dim, Y]
+        
+        return output
 
 
 class GradTTSDependencyGraph(BaseModule):
     def __init__(self, n_vocab, n_spks, spk_emb_dim, n_enc_channels, filter_channels, filter_channels_dp, 
                  n_heads, n_enc_layers, enc_kernel, enc_dropout, window_size, 
-                 n_feats, dec_dim, beta_min, beta_max, pe_scale, ph_dict_size, word_dict_size, synta_params):
+                 n_feats, dec_dim, beta_min, beta_max, pe_scale, ph_dict_size, word_dict_size, synta_params, device='cuda'):
         
         super(GradTTSDependencyGraph, self).__init__()
         self.n_vocab = n_vocab
@@ -88,6 +151,9 @@ class GradTTSDependencyGraph(BaseModule):
 
         self.emb = torch.nn.Embedding(n_vocab, n_enc_channels)
 
+        self.projection1 = DynamicProjectionLayer()
+        self.projection2 = DynamicProjectionLayer(256)
+        
         if n_spks > 1:
             self.spk_emb = torch.nn.Embedding(n_spks, spk_emb_dim)
 
@@ -126,10 +192,7 @@ class GradTTSDependencyGraph(BaseModule):
             dropout_rate=synta_params['predictor_dropout'],
             kernel_size=synta_params['dur_predictor_kernel'])
         
-        self.length_regulator = LengthRegulator()
-
-        self.transform_layer = nn.Linear(256, 79)
-        
+        self.length_regulator = LengthRegulator()        
 
     @torch.no_grad()
     def forward(self, x, x_lengths, word_tokens, ph2word, mel2word, mel2ph,
@@ -152,7 +215,7 @@ class GradTTSDependencyGraph(BaseModule):
         """
 
         ret = {}
-        x, x_lengths = self.relocate_input([x, x_lengths])
+        # x, x_lengths = self.relocate_input([x, x_lengths])
 
         if self.n_spks > 1:
             # Get speaker embedding
@@ -165,12 +228,16 @@ class GradTTSDependencyGraph(BaseModule):
         x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.size(2)), 1).to(x.dtype)
 
         # Get encoder_outputs `mu_x` and log-scaled token durations `logw`
-        mu_x, tgt_nonpadding = self.run_text_encoder(
+        mu_x = self.run_text_encoder(
             x_dp, x_lengths, word_tokens, ph2word, x_lengths.max(), mel2word, mel2ph, ret, graph_lst=graph_lst, etypes_lst=etypes_lst)
 
         logw = ret['dur']
+        
+        # logw = self.logw_projection(logw)
 
-        mu_x = mu_x * tgt_nonpadding
+        ret['mu_x'] = mu_x
+
+        # x_mask = torch.unsqueeze(sequence_mask(x_lengths, mu_x.size(2)), 1).to(x.dtype)
 
         w = torch.exp(logw) * x_mask
         w_ceil = torch.ceil(w) * length_scale
@@ -184,10 +251,10 @@ class GradTTSDependencyGraph(BaseModule):
         attn_mask = x_mask.unsqueeze(-1) * y_mask.unsqueeze(2)
         attn = generate_path(logw, attn_mask.squeeze(1)).unsqueeze(1)
 
-        mu_x = self.transform_layer(mu_x).transpose(1, 2)
+        attn = self.projection1(attn.squeeze(1))
 
         # Align encoded text and get mu_y
-        mu_y = torch.matmul(attn.squeeze(1).transpose(1, 2), mu_x)
+        mu_y = torch.matmul(attn.transpose(1, 2), mu_x)
         mu_y = mu_y.transpose(1, 2)
         encoder_outputs = mu_y[:, :, :y_max_length]
 
@@ -200,7 +267,7 @@ class GradTTSDependencyGraph(BaseModule):
     
         return encoder_outputs, decoder_outputs, attn[:, :, :y_max_length], ret
     
-    def compute_loss(self, x, x_lengths, y, y_lengths, dur_pred, spk=None, out_size=None):
+    def compute_loss(self, x, x_lengths, y, y_lengths, ret, spk=None, out_size=None):
         """
         Computes 3 losses:
             1. duration loss: loss between predicted token durations and those extracted by Monotinic Alignment Search (MAS).
@@ -228,7 +295,9 @@ class GradTTSDependencyGraph(BaseModule):
         x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.size(2)), 1).to(x.dtype)
         
         # Get encoder_outputs `mu_x` and log-scaled token durations `logw`
-        mu_x = self.encoder(x.long(), x_lengths)
+        mu_x = ret['mu_x'].transpose(1, 2)
+        # mu_x = self.transform_layer(mu_x.transpose(1, 2)).transpose(1, 2)
+
         y_max_length = y.shape[-1]
 
         y_mask = sequence_mask(y_lengths, y_max_length).unsqueeze(1).to(x_mask)
@@ -238,21 +307,32 @@ class GradTTSDependencyGraph(BaseModule):
         with torch.no_grad(): 
             const = -0.5 * math.log(2 * math.pi) * self.n_feats
             factor = -0.5 * torch.ones(mu_x.shape, dtype=mu_x.dtype, device=mu_x.device)
-            y_square = torch.matmul(factor.transpose(1, 2), y ** 2)
-            y_mu_double = torch.matmul(2.0 * (factor * mu_x).transpose(1, 2), y)
-            mu_square = torch.sum(factor * (mu_x ** 2), 1).unsqueeze(-1)
+            y_square = torch.matmul(factor, y ** 2)
+
+            # print(factor.shape)
+            # print(mu_x.shape)
+            # print(y.shape)
+            y_mu_double = torch.matmul(2.0 * (factor * mu_x), y)
+            mu_square = torch.sum(factor.transpose(1, 2) * (mu_x.transpose(1, 2) ** 2), 1).unsqueeze(-1)
+
+            # print(y_square.shape)
+            # print(y_mu_double.shape)
+            # print(mu_square.shape)
             log_prior = y_square - y_mu_double + mu_square + const
 
-            attn = maximum_path_numpy(log_prior, attn_mask.squeeze(1))
+            # print(attn_mask.shape)
+            # print(log_prior.shape)
+            attn_mask = self.projection2(attn_mask.squeeze(1))
+            attn = maximum_path_numpy(log_prior, attn_mask)
             attn = attn.detach()
 
         w = attn.sum(2)
-        logw = self.proj_w(x_dp, x_mask, w)
+        logw = ret['dur']
         l_lengths = logw / torch.sum(x_mask)
 
-        mel2token = self.length_regulator(dur_pred)
+        mel2token = self.length_regulator(logw)
 
-        dur_loss = self.add_dur_loss(dur_pred, mel2token, l_lengths)
+        dur_loss = self.add_dur_loss(logw, mel2token, x_lengths)
         # dur_loss = torch.sum(l_lengths) - torch.tensor([1])[0]
 
         # _, ids_str = rand_slice_segments(y)
@@ -281,9 +361,11 @@ class GradTTSDependencyGraph(BaseModule):
             attn = attn_cut
             y = y_cut
             y_mask = y_cut_mask
-
+        
+        # print(attn.shape)
+        # print(mu_x.shape)
         # Align encoded text with mel-spectrogram and get mu_y segment
-        mu_y = torch.matmul(attn.squeeze(1).transpose(1, 2), mu_x.transpose(1, 2))
+        mu_y = torch.matmul(attn.squeeze(1).transpose(1, 2), mu_x)
         mu_y = mu_y.transpose(1, 2)
 
         # Compute loss of score-based decoder
@@ -345,7 +427,18 @@ class GradTTSDependencyGraph(BaseModule):
         # if self.synta_params['use_word_encoder']:
         #     x = x + expand_states(word_encoder_out, mel2word)
 
-        return x, tgt_nonpadding
+        # print('txt encoder')
+        # print(x.shape)
+        # print(txt_tokens.shape)
+
+        # _, l = txt_tokens.shape
+        # print(l)
+
+        x = x * tgt_nonpadding
+
+        return x
+
+        return x.reshape((x.shape[0], l,))
 
     def attention(self, ph_encoder_out, enc_pos, word_encoder_out, dec_pos, mel2word, dec_word_mask):
         ph_kv = self.enc_pos_proj(torch.cat([ph_encoder_out, enc_pos], -1))
@@ -443,14 +536,15 @@ class GradTTSDependencyGraph(BaseModule):
         dur_gt = dur_gt * nonpadding
         wdur = F.l1_loss((dur_pred + 1).log(), (dur_gt + 1).log(), reduction='none')
         wdur = (wdur * nonpadding).sum() / nonpadding.sum()
-        if self.synta_params['lambda_word_dur'] > 0:
-            return wdur * self.synta_params['lambda_word_dur']
-        if self.synta_params['lambda_sent_dur'] > 0:
-            sent_dur_p = dur_pred.sum(-1)
-            sent_dur_g = dur_gt.sum(-1)
-            sdur_loss = F.l1_loss(sent_dur_p, sent_dur_g, reduction='mean')
+        # if self.synta_params['lambda_word_dur'] > 0:
+        #     return wdur * self.synta_params['lambda_word_dur']
+        # if self.synta_params['lambda_sent_dur'] > 0:
 
-            return sdur_loss.mean() * self.synta_params['lambda_sent_dur']
+        sent_dur_p = dur_pred.sum(-1)
+        sent_dur_g = dur_gt.sum(-1)
+        sdur_loss = F.l1_loss(sent_dur_p, sent_dur_g, reduction='mean')
+
+        return sdur_loss.mean() * self.synta_params['lambda_sent_dur']
 
 
 class GradTTSStft(BaseModule):

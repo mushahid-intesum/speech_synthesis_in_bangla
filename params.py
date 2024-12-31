@@ -43,7 +43,7 @@ beta_max = 20.0
 pe_scale = 1000  # 1 for `grad-tts-old.pt` checkpoint
 
 # training parameters
-log_dir = 'logs/multistream_stft_diffusion'
+log_dir = 'logs/dependency_parser'
 test_size = 4
 n_epochs = 100
 batch_size = 1
@@ -132,7 +132,7 @@ synta_params = {
 
     "lambda_kl": 1.0,
     "kl_min": 0.0,
-    "lambda_sent_dur": 0.0,
+    "lambda_sent_dur": 1.0,
     "kl_start_steps": 10000,
     "posterior_start_steps": 0,
     "frames_multiple": 4,

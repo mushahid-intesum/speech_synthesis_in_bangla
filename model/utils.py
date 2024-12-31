@@ -243,6 +243,8 @@ def generate_path(duration, mask):
     path = path - torch.nn.functional.pad(path, convert_pad_shape([[0, 0], 
                                           [1, 0], [0, 0]]))[:, :-1]
     path = path * mask
+
+    
     return path
 
 
