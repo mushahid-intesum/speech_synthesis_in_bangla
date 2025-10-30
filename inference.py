@@ -31,7 +31,7 @@ from meldataset import mel_spectrogram
 import epitran
 from text.bn_phonemiser import bangla_text_normalize, replace_number_with_text
 
-import IPython.display as ipd
+# import IPython.display as ipd
 
 HIFIGAN_CONFIG = '/mnt/Stuff/TTS/speech_synthesis_in_bangla-master/checkpts/hifigan-config.json'
 HIFIGAN_CHECKPT = '/mnt/Stuff/TTS/speech_synthesis_in_bangla-master/checkpts/hifigan.pt'
@@ -117,13 +117,14 @@ if __name__ == '__main__':
 
     
     print('Initializing model...')
-    """ GradTTSSDPContext """
-    # generator = GradTTSSDPContext(len(symbols)+1, params.n_spks, params.spk_emb_dim,
+    """ GradTTS"""
+    # generator = GradTTS(len(symbols)+1, params.n_spks, params.spk_emb_dim,
     #                     params.n_enc_channels, params.filter_channels,
     #                     params.filter_channels_dp, params.n_heads, params.n_enc_layers,
     #                     params.enc_kernel, params.enc_dropout, params.window_size,
     #                     params.n_feats, params.dec_dim, params.beta_min, params.beta_max,
-    #                     pe_scale=1000, k=5)  # pe_scale=1 for `grad-tts-old.pt`
+    #                     pe_scale=1000)
+    # generator.load_state_dict(torch.load('/mnt/Stuff/TTS/speech_synthesis_in_bangla-master/models/gradtts.pt', map_location=lambda loc, storage: loc))
 
     """ GradTTSSDP """
     # generator = GradTTSSDP(len(symbols)+1, params.n_spks, params.spk_emb_dim,
@@ -132,6 +133,8 @@ if __name__ == '__main__':
     #                     params.enc_kernel, params.enc_dropout, params.window_size,
     #                     params.n_feats, params.dec_dim, params.beta_min, params.beta_max,
     #                     pe_scale=1000)  # pe_scale=1 for `grad-tts-old.pt`
+    # generator.load_state_dict(torch.load('/mnt/Stuff/TTS/speech_synthesis_in_bangla-master/models/gradtts_sdp.pt', map_location=lambda loc, storage: loc))
+
 
     """GradTTSStft"""
     generator = GradTTSStft(len(symbols)+1, params.n_spks, params.spk_emb_dim,
@@ -140,7 +143,9 @@ if __name__ == '__main__':
                         params.enc_kernel, params.enc_dropout, params.window_size,
                         params.n_feats, params.dec_dim, params.beta_min, params.beta_max,
                         pe_scale=1000, stft_params=params.stft_config).to(device)
-    generator.load_state_dict(torch.load('/mnt/Stuff/TTS/speech_synthesis_in_bangla-master/logs/multistream_stft_diffusion/grad_9.pt', map_location=lambda loc, storage: loc))
+    generator.load_state_dict(torch.load('/mnt/Stuff/TTS/speech_synthesis_in_bangla-master/models/gradtts_stft.pt', map_location=lambda loc, storage: loc))
+
+    generator = generator.to(device)
 
     _ = generator.eval()
     print(f'Number of parameters: {generator.nparams}')
@@ -156,44 +161,66 @@ if __name__ == '__main__':
     latent_min = 50
     latent_max = 800
 
-    text = "তুই হইলি তুই আর আমি হইলাম আমি  "
-
-    x = torch.LongTensor(get_text(text)).to(device)[None]
-    x_lengths = torch.LongTensor([x.shape[-1]]).to(device)
-
-    t = dt.datetime.now()
-
-    """For GradTTSStft"""
-    y_enc, y_dec, attn, y_g_hat, y_mb_hat = generator.forward(x, x_lengths, n_timesteps=50, temperature=1.3,
-                                        stoc=False, spk=None if params.n_spks==1 else torch.LongTensor([15]),
-                                        length_scale=0.91)
+    texts = ["আমাদের আচার-ব্যবহার শিষ্টাচার পালা-পার্বণ লোকসঙ্গীত চারুশিল্প গ্রামীণ কারুকার্য এসব অবশ্যই আমাদের সংস্কৃতির অঙ্গ।", 
+             "কিন্তু এসব দেদারসে বিক্রি হচ্ছে, ইউরোপীয় দেশের মতো এখানেও ব্যাংক থেকে সিকিউরিটির ভিত্তিতে এসব কেনার জন্য ধারের ব্যবস্থা হয়েছে।",
+             "আর কেউ জানে না। শুধু আমরা তিনজন। কাল যে ঈদ। আপাকে তো আর গুণ্ডাপুলিশ দিনের বেলায় আসতে দেবে না, আপা তাই রাতে আসবে আমাদের দেখতে।",
+             "টিক্কা খান বহাল তবিয়তে বেঁচে আছে, একের পর এক মার্শাল ল'র বাঁধন-বেড়ি প্রচার করে যাচ্ছে।"]
     
-    """For other models"""
-    # y_enc, y_dec, attn = generator.forward(x, x_lengths, n_timesteps=50, temperature=1.3,
-    #                                     stoc=False, spk=None if params.n_spks==1 else torch.LongTensor([15]),
-    #                                     length_scale=0.91)
-    
-    y_dec = y_dec
+    ids = [2308268038, 2309031328, 2311015182, 2311231870]
 
-    audio = (vocoder.forward(y_dec).cpu().squeeze().clamp(-1, 1).detach().numpy() * 32768).astype(np.int16)
-    write(f'sample.wav', 22050, audio)
+    prefix = "gradtts"
+
+    for i, text in enumerate(texts):
+        print(text)
+        x = torch.LongTensor(get_text(text)).to(device)[None]
+        x_lengths = torch.LongTensor([x.shape[-1]]).to(device)
+
+        t = dt.datetime.now()
+
+        """For GradTTSStft"""
+        y_enc, y_dec, attn, y_g_hat, y_mb_hat = generator.forward(x, x_lengths, n_timesteps=100, temperature=1.3,
+                                            stoc=False, spk=None if params.n_spks==1 else torch.LongTensor([15]),
+                                            length_scale=0.91)
+        
+        """For other models"""
+        # y_enc, y_dec, attn = generator.forward(x, x_lengths, n_timesteps=100, temperature=1.3,
+        #                                     stoc=False, spk=None if params.n_spks==1 else torch.LongTensor([15]),
+        #                                     length_scale=0.91)
+        
+        y_dec = y_dec
+
+        audio = (vocoder.forward(y_dec).cpu().squeeze().clamp(-1, 1).detach().numpy() * 32768).astype(np.int16)
+        write(f'{prefix}_sample_{i+1}.wav', 22050, audio)
+
+    # rtf_text = "যেহেতু হোটেল রিজার্ভেশন আপনার এনআইডি দেওয়া সেক্ষেত্রে পুলিশ কিন্তু আপনাকেই গ্রেফতার করবে এর ফলে শ্রোতা পর পর যে শব্দগুলো উচ্চারণ করছে তা যেন ভিন্ন ভিন্ন পথ অতিক্রম করে কিছুটা কালিক ব্যবধান নিয়ে শ্রোতার কানে এসে ওপরিপাতন ঘটাচ্ছে তারা বাদে তিনি নিজেই দেখে, উপভোগ করে তৃপ্তি থাকেনা আমাদের জন্য এঁকে যান একের পর এক ক্যানভাসে জীবন্ত চিত্র, অমর করে রাখেন তার স্বপ্নের পদ্মপুকুরকে"
     
+    # rtf_values = []
     # with torch.no_grad():
-    #     # for i, text in enumerate(texts):
+    #     txt = ""
+    #     for i in range(len(rtf_text)):
+    #         txt += rtf_text[i]
     #         print(f'Synthesizing text...', end=' ')
-    #         x = torch.LongTensor(get_text(text)).cuda()[None]
+    #         x = torch.LongTensor(get_text(txt)).cuda()[None]
     #         x_lengths = torch.LongTensor([x.shape[-1]]).cuda()
                     
     #         t = dt.datetime.now()
-    #         y_enc, y_dec, attn = generator.forward(x, x_lengths, n_timesteps=timesteps, temperature=1.5,
-    #                                                     stoc=False, spk=spk, length_scale=0.91)
+    #         # y_enc, y_dec, attn = generator.forward(x, x_lengths, n_timesteps=100, temperature=1.5,
+    #         #                                             stoc=False, spk=spk, length_scale=0.91)
+    #         """For GradTTSStft"""
+    #         y_enc, y_dec, attn, y_g_hat, y_mb_hat = generator.forward(x, x_lengths, n_timesteps=100, temperature=1.3,
+    #                                             stoc=False, spk=None if params.n_spks==1 else torch.LongTensor([15]),
+    #                                             length_scale=0.91)
     #         t = (dt.datetime.now() - t).total_seconds()
     #         print(f'Grad-TTS RTF: {t * 22050 / (y_dec.shape[-1] * 256)}')
     #         rtf = t * 22050 / (y_dec.shape[-1] * 256)
+    #         rtf_values.append(rtf)
     
-    #         audio = (vocoder.forward(y_dec).cpu().squeeze().clamp(-1, 1).numpy() * 32768).astype(np.float32)
-    #         len_ = len(audio) / 22050
-    #         write(f'./out/sample.wav', 22050, audio)
+    #         # audio = (vocoder.forward(y_dec).cpu().squeeze().clamp(-1, 1).numpy() * 32768).astype(np.float32)
+    #         # len_ = len(audio) / 22050
+    #         # write(f'./out/sample.wav', 22050, audio)
+    
+    # with open('grad_tts_stft_rtf.txt', 'w') as f:
+    #     f.write(json.dumps(rtf_values))
 
 
-    print('Done. Check out `out` folder for samples.')
+    # print('Done. Check out `out` folder for samples.')

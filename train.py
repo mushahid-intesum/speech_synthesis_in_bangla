@@ -91,53 +91,40 @@ if __name__ == "__main__":
 
     print('Initializing logger...')
     logger = SummaryWriter(log_dir=log_dir)
-    
-    """Dataloader for DependencyGraph model"""
+
     print('Initializing data loaders...')
-    train_dataset = TextMelGraphDataset(synta_params, train_filelist_path, word_dict)
-    batch_collate = TextMelGraphDatasetCollate(synta_params)
+    train_dataset = TextMelDataset(train_filelist_path, add_blank,
+                                   n_fft, n_feats, sample_rate, hop_length,
+                                   win_length, f_min, f_max)
+    batch_collate = TextMelBatchCollate()
     loader = DataLoader(dataset=train_dataset, batch_size=batch_size,
                         collate_fn=batch_collate, drop_last=True,
-                        num_workers=0, shuffle=False)
-    
-    test_dataset = TextMelGraphDataset(synta_params, valid_filelist_path, word_dict)
-    test_loader = DataLoader(dataset=test_dataset, batch_size=batch_size,
-                        collate_fn=batch_collate, drop_last=True,
-                        num_workers=0, shuffle=False)
-
-    # print('Initializing data loaders...')
-    # train_dataset = TextMelDataset(train_filelist_path, add_blank,
-    #                                n_fft, n_feats, sample_rate, hop_length,
-    #                                win_length, f_min, f_max)
-    # batch_collate = TextMelBatchCollate()
-    # loader = DataLoader(dataset=train_dataset, batch_size=batch_size,
-    #                     collate_fn=batch_collate, drop_last=True,
-    #                     num_workers=4, shuffle=False)
-    # test_dataset = TextMelDataset(valid_filelist_path, add_blank,
-    #                               n_fft, n_feats, sample_rate, hop_length,
-    #                               win_length, f_min, f_max)
+                        num_workers=4, shuffle=False)
+    test_dataset = TextMelDataset(valid_filelist_path, add_blank,
+                                  n_fft, n_feats, sample_rate, hop_length,
+                                  win_length, f_min, f_max)
 
     print('Initializing model...')
 
     """ GradTTSSDP model """
+    model = GradTTS(nsymbols, 1, None, n_enc_channels, filter_channels, filter_channels_dp,
+                    n_heads, n_enc_layers, enc_kernel, enc_dropout, window_size, 
+                    n_feats, dec_dim, beta_min, beta_max, pe_scale).to(device)
+    model.load_state_dict(torch.load("/mnt/Stuff/TTS/speech_synthesis_in_bangla-master/logs/gradtts_sdp/grad_9.pt",
+                                      map_location=lambda loc, storage: loc))
+
     # model = GradTTSSDP(nsymbols, 1, None, n_enc_channels, filter_channels, filter_channels_dp,
     #                 n_heads, n_enc_layers, enc_kernel, enc_dropout, window_size, 
     #                 n_feats, dec_dim, beta_min, beta_max, pe_scale).to(device)
+    # model.load_state_dict(torch.load("/mnt/Stuff/TTS/speech_synthesis_in_bangla-master/logs/gradtts_sdp/grad_9.pt",
+    #                                   map_location=lambda loc, storage: loc))
 
     """GradTTSStft model"""
-    # model = GradTTSStft(nsymbols, 1, None, n_enc_channels, filter_channels, filter_channels_dp,
-    #                 n_heads, n_enc_layers, enc_kernel, enc_dropout, window_size, 
-    #                 n_feats, dec_dim, beta_min, beta_max, pe_scale, stft_params).to(device)
-    # model.load_state_dict(torch.load("/mnt/Stuff/TTS/speech_synthesis_in_bangla-master/logs/multistream_stft_diffusion/grad_5.pt", map_location=lambda loc, storage: loc))
-
-    """ GradTTSDependencyGraph model"""
-    model = GradTTSDependencyGraph(nsymbols, 1, None, n_enc_channels, filter_channels, filter_channels_dp,
+    model = GradTTSStft(nsymbols, 1, None, n_enc_channels, filter_channels, filter_channels_dp,
                     n_heads, n_enc_layers, enc_kernel, enc_dropout, window_size, 
-                    n_feats, dec_dim, beta_min, beta_max, pe_scale, word_dict_size, ph_dict_size, synta_params).to(device)  
-
-    # print('Number of encoder + duration predictor parameters: %.2fm' % (model.encoder.nparams/1e6))
-    # print('Number of decoder parameters: %.2fm' % (model.decoder.nparams/1e6))
-    # print('Total parameters: %.2fm' % (model.nparams/1e6))
+                    n_feats, dec_dim, beta_min, beta_max, pe_scale, stft_params).to(device)
+    model.load_state_dict(torch.load("/mnt/Stuff/TTS/speech_synthesis_in_bangla-master/logs/multistream_stft_diffusion/2/grad_2.pt",
+                                      map_location=lambda loc, storage: loc))
 
     print('Initializing optimizer...')
     optimizer = torch.optim.Adam(params=model.parameters(), lr=learning_rate)
@@ -164,13 +151,7 @@ if __name__ == "__main__":
                 model.zero_grad()
                 x, x_lengths = batch['x'].to(device), batch['x_lengths'].to(device)
                 y, y_lengths = batch['y'].to(device), batch['y_lengths'].to(device)
-                word_tokens = batch['word_tokens'].to(device)
-                mel2ph = batch['mel2ph'].to(device)
-                mel2word = batch['mel2word'].to(device)
-                ph2word = batch['ph2word'].to(device)
-                graph_lst = batch['graph_lst']
-                etypes_lst = batch['etypes_lst']
-
+                
                 """ for running GradTTSStft model """
                 # y_enc, y_dec, attn, y_g_hat, y_mb_hat = model(x, x_lengths, n_timesteps=50)
                 # dur_loss, prior_loss, diff_loss, stft_loss = model.compute_loss(x, x_lengths,
@@ -180,19 +161,12 @@ if __name__ == "__main__":
                 # loss = sum([dur_loss, prior_loss, diff_loss, stft_loss])
 
                 """GradTTSSDP"""
-                # y_enc, y_dec, attn = model(x, x_lengths, n_timesteps=50)
-                # dur_loss, prior_loss, diff_loss = model.compute_loss(x, x_lengths,
-                #                                                      y, y_lengths,
-                #                                                      out_size=out_size)
-
-                """ for running DependencyGraph model """
-                y_enc, y_dec, attn, ret = model(x, x_lengths, word_tokens, ph2word,
-                                                mel2word, mel2ph, graph_lst, etypes_lst, n_timesteps=50)
+                y_enc, y_dec, attn = model(x, x_lengths, n_timesteps=50)
                 dur_loss, prior_loss, diff_loss = model.compute_loss(x, x_lengths,
-                                                                     y, y_lengths, ret,
+                                                                     y, y_lengths,
                                                                      out_size=out_size)
+                
                 loss = sum([dur_loss, prior_loss, diff_loss])
-
 
                 loss.backward()
 
@@ -236,8 +210,6 @@ if __name__ == "__main__":
                 
                 iteration += 1
 
-                break
-
         log_msg = 'Epoch %d: duration loss = %.3f ' % (epoch, np.mean(dur_losses))
         log_msg += '| prior loss = %.3f ' % np.mean(prior_losses)
         log_msg += '| diffusion loss = %.3f\n' % np.mean(diff_losses)
@@ -252,27 +224,24 @@ if __name__ == "__main__":
         if epoch % params.save_every > 0:
             continue
 
-        model.eval()
-        print('Synthesis...')
+        # model.eval()
+        # print('Synthesis...')
         with torch.no_grad():
-            with tqdm(test_loader, total=len(test_dataset)//batch_size) as progress_bar:
-                for batch_idx, item in enumerate(progress_bar):
-                    x, x_lengths = item['x'].to(device), item['x_lengths'].to(device)
-                    word_tokens = item['word_tokens'].to(device)
-                    mel2ph = item['mel2ph'].to(device)
-                    mel2word = item['mel2word'].to(device)
-                    ph2word = item['ph2word'].to(device)
-                    graph_lst = item['graph_lst']
-                    etypes_lst = item['etypes_lst']
+            # with tqdm(test_loader, total=len(test_dataset)//batch_size) as progress_bar:
+                # for batch_idx, item in enumerate(progress_bar):
+                #     x, x_lengths = item['x'].to(device), item['x_lengths'].to(device)
+                    # word_tokens = item['word_tokens'].to(device)
+                    # mel2ph = item['mel2ph'].to(device)
+                    # mel2word = item['mel2word'].to(device)
+                    # ph2word = item['ph2word'].to(device)
+                    # graph_lst = item['graph_lst']
+                    # etypes_lst = item['etypes_lst']
                     # x = item['x'].to(torch.long).unsqueeze(0).to(device)
                     # x_lengths = torch.LongTensor([x.shape[-1]]).to(device)
 
                     """ For GradTTSStft """
                     # y_enc, y_dec, attn, _, _ = model(x, x_lengths, n_timesteps=50)
 
-                    """Dependency graph model"""
-                    y_enc, y_dec, attn, ret = model(x, x_lengths, word_tokens, ph2word,
-                                                    mel2word, mel2ph, graph_lst, etypes_lst, n_timesteps=50)
                     """ For other models """
                     # y_enc, y_dec, attn = model(x, x_lengths, n_timesteps=50)
 
@@ -286,14 +255,14 @@ if __name__ == "__main__":
                     # logger.add_image(f'image_{i}/alignment',
                     #                  plot_tensor(attn.squeeze().cpu()),
                     #                  global_step=iteration, dataformats='HWC')
-                    save_plot(y_enc.squeeze().cpu(), 
-                            f'{log_dir}/generated_enc_{i}.png')
-                    save_plot(y_dec.squeeze().cpu(), 
-                            f'{log_dir}/generated_dec_{i}.png')
-                    save_plot(attn.squeeze().cpu(), 
-                            f'{log_dir}/alignment_{i}.png')
+                    # save_plot(y_enc.squeeze().cpu(), 
+                    #         f'{log_dir}/generated_enc_{i}.png')
+                    # save_plot(y_dec.squeeze().cpu(), 
+                    #         f'{log_dir}/generated_dec_{i}.png')
+                    # save_plot(attn.squeeze().cpu(), 
+                    #         f'{log_dir}/alignment_{i}.png')
                     
-                    break
+                    # break
 
         ckpt = model.state_dict()
         torch.save(ckpt, f=f"{log_dir}/grad_{epoch}.pt")

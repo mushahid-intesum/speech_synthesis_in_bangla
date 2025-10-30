@@ -395,3 +395,74 @@ class ConvFlow(nn.Module):
         return x, logdet
     else:
         return x
+    
+
+def get_mask_from_lengths(lengths, max_len=None):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    batch_size = lengths.shape[0]
+    if max_len is None:
+        max_len = torch.max(lengths).item()
+
+    ids = torch.arange(0, max_len).unsqueeze(0).expand(batch_size, -1).to(device)
+    mask = ids >= lengths.unsqueeze(1).expand(-1, max_len)
+
+    return mask
+
+
+
+class MelLoss(nn.Module):
+    """ MelLoss Loss
+    """
+
+    def __init__(self, loss_second_moment=False):
+        super(MelLoss, self).__init__()
+        self.loss_second_moment = loss_second_moment
+
+    def forward(
+            self,
+            mel_targets, mel_predictions,
+            mel_lens=None,
+            max_mel_len=None,
+            mel_masks=None,
+    ):
+        if mel_masks is not None:
+            pass
+        elif mel_lens is not None:
+            mel_masks = (
+                get_mask_from_lengths(mel_lens, max_mel_len)
+                if mel_lens is not None
+                else None
+            )
+        else:
+            raise NotImplementedError
+
+        mel_masks = ~mel_masks
+        mel_targets = mel_targets[:, : mel_masks.shape[1], :]
+        self.mel_masks = mel_masks[:, :mel_masks.shape[1]]
+        self.mel_masks_fill = ~self.mel_masks
+
+        mel_predictions = mel_predictions.masked_fill(self.mel_masks_fill.unsqueeze(-1), 0)
+        mel_targets = mel_targets.masked_fill(self.mel_masks_fill.unsqueeze(-1), 0)
+        if self.loss_second_moment:
+            mel_loss = torch.abs(mel_predictions - mel_targets) * self.weights_nonzero_speech(mel_targets)
+            pass
+        else:
+            mel_loss = self.l1_loss(mel_predictions, mel_targets)
+
+        return mel_loss
+
+    def l1_loss(self, decoder_output, target):
+        # decoder_output : B x T x n_mel
+        # target : B x T x n_mel
+        l1_loss = F.l1_loss(decoder_output, target, reduction="none")
+        weights = self.weights_nonzero_speech(target)
+        l1_loss = (l1_loss * weights).sum() / weights.sum()
+        return l1_loss
+
+    @staticmethod
+    def weights_nonzero_speech(target):
+        # target : B x T x mel
+        # Assign weight 1.0 to all labels except for padding (id=0).
+        dim = target.size(-1)
+        return target.abs().sum(-1, keepdim=True).ne(0).float().repeat(1, 1, dim)

@@ -7,3 +7,8 @@ other_log
 *.wav
 *.txt
 *.zip
+outputs
+*.pdf
+.ropeproject
+*.pt
+logs2

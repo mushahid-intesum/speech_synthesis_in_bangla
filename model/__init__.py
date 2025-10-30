@@ -6,6 +6,5 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 # MIT License for more details.
 
-from .tts import GradTTS, GradTTSSDP, GradTTSStft, GradTTSDependencyGraph
+from .tts import GradTTS, GradTTSSDP, GradTTSStft
 from .stft_vocoder import *
-from .syntactic_graph_buider import Sentence2GraphParser
