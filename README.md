@@ -5,8 +5,8 @@
 
 # STFT-GradTTS: A Robust, Diffusion-based Speech Synthesis System with iSTFT decoder for Bangla
 
-Official implementation of A Robust Text-to-Speech System in Bangla with Stochastic
-Duration Predictor
+Official implementation of **STFT-GradTTS: A Robust, Diffusion-based Speech Synthesis System with iSTFT decoder for Bangla**
+
 
 **Authors**: Mushahid Intesum\**, Abdullah Ibne Masud\**, Md Ashraful Islam\**, Dr Md Rezaul Karim.
 
