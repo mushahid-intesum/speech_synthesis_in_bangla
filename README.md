@@ -57,7 +57,7 @@ Put necessary HiFi-GAN checkpoints into `checkpts` folder in root directory (not
     ```bash
     python inference.py
     ```
-4.You will
+4.You will find the generated audio in the root folder
 
 ## Training
 
