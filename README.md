@@ -2,7 +2,6 @@
     <img src="resources/reverse-diffusion.gif" alt="drawing" width="500"/>
 </p>
 
-
 # STFT-GradTTS: A Robust, Diffusion-based Speech Synthesis System with iSTFT decoder for Bangla
 
 Official implementation of **STFT-GradTTS: A Robust, Diffusion-based Speech Synthesis System with iSTFT decoder for Bangla**
